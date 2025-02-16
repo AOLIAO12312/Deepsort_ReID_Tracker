@@ -1,0 +1,224 @@
+import glob
+import os
+import cv2
+import torch
+from models.yolo.yolo_detector import YoloDetector
+from models.deep_sort_pytorch.deepsort_tracker import DeepsortTracker
+from src.bounding_box_filter import BoundingBoxFilter
+from src.person_database import PersonDatabase
+from src.utils import xyxy_to_xywh
+from src.utils import get_border
+
+class ReidTracker:
+    # Initialize ReidTracker
+    def __init__(self,detector_path,deepsort_cfg_path,base_data_path,reset_queue,device):
+        # Initialize yolo detector
+        print("Loading object detector...")
+        self.detector = YoloDetector(detector_path, device)
+
+        # Initialize deepsortTracker
+        print("Loading deepsort tracker...")
+        deepsort_tracker = DeepsortTracker(deepsort_cfg_path, device)
+        self.tracker = deepsort_tracker.get_tracker()
+
+        # Initialize person feature database
+
+        self.person_database = PersonDatabase()
+
+        # Record of the index of the frame
+        self.frame_idx = 0
+        # Deepsort ID to Person's Mapping table
+        self.deepsort_to_athlete = {}
+        # Deepsort id lost count if the count is too high, id will be removed
+        self.id_lost_count = {}
+        self.LOST_THRESHOLD = 15
+
+        # Queue for receiving external input that requires to reset personnel
+        self.reset_queue = reset_queue
+
+        self.bounding_box_filter = None
+        self.base_data_path = base_data_path
+
+        self.block_id = {}
+
+        print("Loading base data...")
+        self.load_base_data()
+
+
+    def load_base_data(self):
+        """
+        Loads base data from the specified directory, reads image files from each folder,
+        and adds the images to the person database.
+
+        The method iterates through all folders in the base data path, reads images with
+        ".png" extension from each folder, and adds them to the database under the corresponding person's name.
+        """
+        for folder_name in os.listdir(self.base_data_path):
+            folder_path = os.path.join(self.base_data_path, folder_name)
+            if os.path.isdir(folder_path):
+                image_paths = sorted(glob.glob(os.path.join(folder_path, "*.png")))
+                images = [cv2.imread(img_path) for img_path in image_paths]
+                self.person_database.add_person(folder_name, images)
+                print(f"Added person: {folder_name} with {len(images)} images.")
+
+    def identify(self,cropped_images:list):
+        """
+        Receive cropped images list need to be identified and return candidates results and L2 distance
+
+        Parameters
+        ----------
+        cropped_images:person's image need to be identified
+
+        Returns
+        -------
+        data: L2 distance between input image and database reference image
+        """
+        data = []
+        for cropped_image in cropped_images:
+            results = self.person_database.search(cropped_image, 3)
+            data.append(results)
+        return data
+
+    def map_deepsort_to_athlete(self,tracking_results, orig_img):
+        """
+        Map the DeepSORT ID to the actual athlete identity ID
+        Parameters
+        ----------
+        tracking_results: list
+            deepsort tracking outputs
+        orig_img: numpy.ndarray
+            original image of this frame
+
+        Returns
+        -------
+        mapped_results: list
+            final mapped results of each bbox
+        """
+        mapped_results = []
+        unassigned_tracks = []
+        unassigned_deepsort_ids = []
+        update_tracks_names = []
+        update_tracks_image = []
+        active_ids = set()
+        for track in tracking_results:
+            deepsort_id = track[4]
+            bbox = track[:4]
+            active_ids.add(deepsort_id)
+            if deepsort_id not in self.deepsort_to_athlete:
+                x1, y1, x2, y2 = map(int, bbox)
+                cropped_image = orig_img[y1:y2, x1:x2]
+                unassigned_tracks.append(cropped_image)
+                unassigned_deepsort_ids.append(deepsort_id)
+            else:
+                if self.frame_idx % 30 == 0:
+                    x1, y1, x2, y2 = map(int, bbox)
+                    cropped_image = orig_img[y1:y2, x1:x2]
+                    update_tracks_image.append(cropped_image)
+                    update_tracks_names.append(self.deepsort_to_athlete[deepsort_id])
+        # Dynamically write the person's features to the database every certain number of frames and rebuild the index
+        if self.frame_idx % 30 == 0:
+            if not self.reset_queue.empty():
+                user_input = self.reset_queue.get()
+                print(f"\nWaiting for {user_input} information to be reset...")
+                self.person_database.update_person_feature_and_rebuild_index(update_tracks_names, update_tracks_image, 3,
+                                                                        [user_input])
+                existing_deepsort_ids = [k for k, v in self.deepsort_to_athlete.items() if v == user_input]
+                if len(existing_deepsort_ids) > 0:
+                    del self.deepsort_to_athlete[existing_deepsort_ids[0]]
+                    self.block_id[existing_deepsort_ids[0]] = user_input
+            else:
+                self.person_database.update_person_feature_and_rebuild_index(update_tracks_names, update_tracks_image, 3,
+                                                                        [])
+
+        datas = self.identify(unassigned_tracks)
+        # handle the issue of multiple DeepSORT IDs corresponding to the same athlete.
+        for idx, (deepsort_id,data) in enumerate(zip(unassigned_deepsort_ids,datas)):
+            for (candidate,distance) in data:
+                if (not deepsort_id in self.block_id) or (self.block_id[deepsort_id] != candidate):
+                    # if the L2 distance is below the threshold, it can be considered that the identification confidence is high enough to assign an ID.
+                    if distance < 0.37:
+                        if candidate in self.deepsort_to_athlete.values():
+                            continue
+                        else:
+                            self.deepsort_to_athlete[deepsort_id] = candidate
+                            break
+                    else:
+                        break
+                else:
+                    continue
+
+        # Add the result to the final mapping
+        for track in tracking_results:
+            deepsort_id = track[4]
+            if deepsort_id in self.deepsort_to_athlete:
+                mapped_results.append([*track[:4], self.deepsort_to_athlete[deepsort_id]])
+            else:
+                mapped_results.append([*track[:4], f'Unknown {deepsort_id}'])
+        self.handle_lost_ids(active_ids)  # handle lost id and delete it if it lost for a long time
+        return mapped_results
+
+    def handle_lost_ids(self,active_ids):
+        """
+        Handles the case when certain IDs are lost during tracking by updating the
+        lost count and removing those IDs if they exceed the threshold.
+
+        Parameters
+        ----------
+        active_ids : set
+            A set of currently active IDs from DeepSORT.
+
+        Returns
+        -------
+        None
+        """
+        lost_ids = set(self.deepsort_to_athlete.keys()) - active_ids
+        for lost_id in lost_ids:
+            self.id_lost_count[lost_id] = self.id_lost_count.get(lost_id, 0) + 1
+            if self.id_lost_count[lost_id] >= self.LOST_THRESHOLD:
+                del self.deepsort_to_athlete[lost_id]
+                del self.id_lost_count[lost_id]
+
+
+    def update(self,frame):
+        """
+        Processes a given series frame, detects objects, filters bounding boxes, and performs continuous tracking
+        on the detected individuals. If valid detections are found, it updates the tracker and maps the results
+        to the corresponding athletes.
+
+        Parameters
+        ----------
+        frame : numpy.ndarray
+            The current video frame to be processed.
+
+        Returns
+        -------
+        mapped_results : list
+            A list of the results where each result is mapped to a specific athlete based on the tracker output.
+            If no valid frame or detections are found, an empty list is returned.
+        """
+        if frame is not None:
+            if self.bounding_box_filter is None:
+                bound = get_border(frame.copy())
+                self.bounding_box_filter = BoundingBoxFilter(bound,0.1,0.4)
+                return []
+            tracker_outputs = []
+            result = self.detector.get_result(frame)
+            frame, xyxy, conf = self.bounding_box_filter.box_filter(frame, result)
+            if xyxy is not None:
+                xywhs = torch.empty(0, 4)
+                confess = torch.empty(0, 1)
+                for i, (bbox, confidence) in enumerate(zip(xyxy, conf)):
+                    x1, y1, x2, y2 = map(int, bbox)
+                    x_c, y_c, w, h = xyxy_to_xywh(x1, y1, x2, y2)
+                    xywhs = torch.cat((xywhs, torch.tensor([x_c, y_c, w, h]).unsqueeze(0)), dim=0)
+                    confess = torch.cat((confess, torch.tensor([confidence]).unsqueeze(0)), dim=0)
+                # Perform continuous human tracking
+                tracker_outputs = self.tracker.update(xywhs, confess, frame)
+            else:
+                self.tracker.increment_ages()
+            # Map DeepSORT results to specific athlete identities
+            mapped_results = self.map_deepsort_to_athlete(tracker_outputs, frame)
+            self.frame_idx += 1
+            return mapped_results
+        else:
+            return []
