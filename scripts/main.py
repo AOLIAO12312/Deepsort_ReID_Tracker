@@ -24,7 +24,7 @@ if __name__ == '__main__':
     frame_width = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
     output_video_path = '/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/data/output/tracked_video.mp4'
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # 使用 mp4v 编码器
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     video_writer = cv2.VideoWriter(output_video_path, fourcc, 30, (frame_width, frame_height))
 
     input_thread = threading.Thread(target=wait_for_input, daemon=True)
