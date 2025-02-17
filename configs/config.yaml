@@ -1,0 +1,20 @@
+deepsort:
+  deepsort_cfg_path: "/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/configs/deep_sort.yaml"
+
+yolo:
+  model_path: "/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/models/yolo/weights/yolo11n.pt"
+
+extractor:
+  extractor_name: "osnet_x1_0"
+  extractor_path: "/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/models/feature_extractor/weight/osnet_x1_0_imagenet.pth"
+
+reid_tracker:
+  LOST_THRESHOLD: 15
+  frame_batch_size: 15
+  limit_min_L2distance: 0.43
+  reinforce_tensity: 5
+  sample_density: 3
+
+person_database:
+  base_size: 10
+  recent_size: 30

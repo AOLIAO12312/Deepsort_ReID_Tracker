@@ -1,14 +1,10 @@
 import faiss
-import numpy as np
-import torch
 
 from src.person import Person
 from models.feature_extractor.custom_feature_extractor import CustomFeatureExtractor
 
 import cv2
 import numpy as np
-import torch
-from torchvision import transforms
 
 
 def preprocess_images(image_list, target_size=(224, 224)):
@@ -64,14 +60,15 @@ def preprocess_images(image_list, target_size=(224, 224)):
 
 
 class PersonDatabase:
-    def __init__(self):
+    def __init__(self,cfg):
         self.extractor = CustomFeatureExtractor('osnet_x1_0',
-                                                '/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/models/feature_extractor/osnet_x1_0_imagenet.pth',
+                                                '/models/feature_extractor/weight/osnet_x1_0_imagenet.pth',
                                                 'cpu')
         self.database = []
         self.index = None
         self.features = []
         self.names = []
+        self.cfg = cfg
 
     def add_person(self,person_name:str, person_images):
         """
@@ -88,7 +85,7 @@ class PersonDatabase:
         person_id:int
             Assigned database id of the person
         """
-        new_person = Person(person_name,base_size=5,recent_size=20)
+        new_person = Person(person_name,base_size=self.cfg['person_database']['base_size'],recent_size=self.cfg['person_database']['recent_size'])
         person_features = self.extractor.get_normalized_result(preprocess_images(person_images))
         for i,(person_image,person_feature) in enumerate(zip(person_images,person_features)):
             ret = new_person.update_image_and_feature(person_image,person_feature,'base')
@@ -231,36 +228,31 @@ class PersonDatabase:
         results: list
             A list of the top k people with the smallest average distance from all queries.
         """
-        total_distances = []
-        total_names = []
+        if self.index is not None:
+            total_distances = []
+            total_names = []
+            for query_image in query_images:
+                query_features = self.extractor.get_normalized_result(preprocess_images([query_image]))
+                query_feature = query_features[0].detach().cpu().numpy().reshape(1, -1)
+                distances, indices = self.index.search(query_feature, top_k)
+                # Collect the distances and corresponding names for each query image
+                for i, idx in enumerate(indices[0]):
+                    if idx != -1:
+                        total_distances.append(distances[0][i])
+                        total_names.append(self.names[idx])
 
-        # For each query image, search and calculate the distances
-        for query_image in query_images:
-            query_features = self.extractor.get_normalized_result(preprocess_images([query_image]))
-            query_feature = query_features[0].detach().cpu().numpy().reshape(1, -1)
+            # Calculate the mean distance for each name
+            name_to_distances = {}
+            for name, distance in zip(total_names, total_distances):
+                if name not in name_to_distances:
+                    name_to_distances[name] = []
+                name_to_distances[name].append(distance)
+            avg_distances = {name: sum(dist_list) / len(dist_list) for name, dist_list in name_to_distances.items()}
 
-            distances, indices = self.index.search(query_feature, top_k)
+            # Sort people by their average distance and get the top k
+            sorted_avg_distances = sorted(avg_distances.items(), key=lambda x: x[1])
+            results = [[name, distance] for name, distance in sorted_avg_distances[:top_k]]
 
-            # Collect the distances and corresponding names for each query image
-            for i, idx in enumerate(indices[0]):
-                if idx != -1:
-                    total_distances.append(distances[0][i])
-                    total_names.append(self.names[idx])
-
-        # Calculate the mean distance for each name
-        name_to_distances = {}
-        for name, distance in zip(total_names, total_distances):
-            if name not in name_to_distances:
-                name_to_distances[name] = []
-            name_to_distances[name].append(distance)
-
-        # Calculate average distances for each person
-        avg_distances = {name: sum(dist_list) / len(dist_list) for name, dist_list in name_to_distances.items()}
-
-        # Sort people by their average distance and get the top k
-        sorted_avg_distances = sorted(avg_distances.items(), key=lambda x: x[1])
-
-        # Return the top k closest people with their average distances
-        results = [[name, distance] for name, distance in sorted_avg_distances[:top_k]]
-
-        return results
+            return results
+        else:
+            return []

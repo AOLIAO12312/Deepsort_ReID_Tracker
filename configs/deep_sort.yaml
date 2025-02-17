@@ -1,5 +1,5 @@
 DEEPSORT:
-  REID_CKPT: "/Volumes/Disk_1/ApplicationData/PythonProject/KabaddiAI-main/models/deep_sort_pytorch/deep_sort/deep/checkpoint/ckpt.t7"
+  REID_CKPT: "/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/models/deep_sort_pytorch/deep_sort/deep/checkpoint/ckpt.t7"
   MAX_DIST: 0.1
   MIN_CONFIDENCE: 0.3
   NMS_MAX_OVERLAP: 0.5

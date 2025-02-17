@@ -11,7 +11,7 @@ from src.utils import get_border
 
 class ReidTracker:
     # Initialize ReidTracker
-    def __init__(self,detector_path,deepsort_cfg_path,base_data_path,reset_queue,device):
+    def __init__(self,detector_path,deepsort_cfg_path,base_data_path,cfg,reset_queue,device):
         # Initialize yolo detector
         print("Loading object detector...")
         self.detector = YoloDetector(detector_path, device)
@@ -23,7 +23,7 @@ class ReidTracker:
 
         # Initialize person feature database
 
-        self.person_database = PersonDatabase()
+        self.person_database = PersonDatabase(cfg)
 
         # Record of the index of the frame
         self.frame_idx = 0
@@ -38,10 +38,11 @@ class ReidTracker:
 
         self.bounding_box_filter = None
         self.base_data_path = base_data_path
+        self.cfg = cfg
 
         self.block_id = {}
         self.person_conf = {}
-
+        self.name_seq = 1
         print("Loading base data...")
         self.load_base_data()
 
@@ -176,33 +177,41 @@ class ReidTracker:
                 else:
                     deepsort_id_to_images[deepsort_id] = [cropped_image]
 
-        # Assume 20 frames as a group
-        # if tracking id appear less than 10 frames, just discard it
+        # Assume 15 frames as a group
+        # if tracking id appear less than half frames, discard it
         update_names = []
         update_images = []
         for i,(deepsort_id,cropped_images) in enumerate(deepsort_id_to_images.items()):
-            if len(cropped_images) < 10:
+            if len(cropped_images) < int(len(cropped_images)/2):
                 continue
-            sliced_images = cropped_images[::4]
+            sliced_images = cropped_images[::self.cfg['reid_tracker']['sample_density']]
             results = self.person_database.multi_frame_search(sliced_images,4)
             for result in results:
-                if result[0] in self.deepsort_to_athlete.values():
-                    if result[1] < self.person_conf[result[0]]:
-                        for existing_deepsort_id, person in list(self.deepsort_to_athlete.items()):
-                            if person == result[0]:
-                                del self.deepsort_to_athlete[existing_deepsort_id]
-                                break
-                        self.deepsort_to_athlete[deepsort_id] = result[0]
-                        self.person_conf[result[0]] = result[1]
-                        break
-                    continue
-                else:
-                    if result[1] < 0.6:
-                        self.deepsort_to_athlete[deepsort_id] = result[0]
-                        self.person_conf[result[0]] = result[1]
-                        break
+                if deepsort_id in self.block_id:
+                    if self.block_id[deepsort_id] == result[0]:
+                        continue
+                if result[1] < self.cfg['reid_tracker']['limit_min_L2distance']:
+                    if result[0] in self.deepsort_to_athlete.values():
+                        if result[1] < self.person_conf[result[0]]:
+                            for existing_deepsort_id, person in list(self.deepsort_to_athlete.items()):
+                                if person == result[0]:
+                                    del self.deepsort_to_athlete[existing_deepsort_id]
+                                    break
+                            self.deepsort_to_athlete[deepsort_id] = result[0]
+                            self.person_conf[result[0]] = result[1]
+                            break
+                        continue
                     else:
+                        self.deepsort_to_athlete[deepsort_id] = result[0]
+                        self.person_conf[result[0]] = result[1]
                         break
+                else:
+                    # if self.name_seq < 10:
+                    #     self.person_database.add_person(f"Person_{self.name_seq}",sliced_images)
+                    #     self.deepsort_to_athlete[deepsort_id] = f"Person_{self.name_seq}"
+                    #     self.person_conf[f"Person_{self.name_seq}"] = 1
+                    #     self.name_seq += 1
+                    break
 
         tracking_results = tracking_resultses[int(len(tracking_resultses)/2)]
         orig_img = orig_imgs[int(len(orig_imgs)/2)]
@@ -216,7 +225,16 @@ class ReidTracker:
                 update_names.append(name)
                 update_images.append(cropped_image)
 
-        self.person_database.update_person_feature_and_rebuild_index(update_names,update_images,4,[])
+        if not self.reset_queue.empty():
+            user_input = self.reset_queue.get()
+            print(f"\nWaiting for {user_input} information to be reset...")
+            self.person_database.update_person_feature_and_rebuild_index(update_names,update_images,self.cfg['reid_tracker']['reinforce_tensity'],[user_input])
+            existing_deepsort_ids = [k for k, v in self.deepsort_to_athlete.items() if v == user_input]
+            if len(existing_deepsort_ids) > 0:
+                del self.deepsort_to_athlete[existing_deepsort_ids[0]]
+                self.block_id[existing_deepsort_ids[0]] = user_input
+        else:
+            self.person_database.update_person_feature_and_rebuild_index(update_names,update_images,self.cfg['reid_tracker']['reinforce_tensity'],[])
 
         for idx,tracking_results in enumerate(tracking_resultses):
             mapped_results = []
@@ -305,7 +323,7 @@ class ReidTracker:
 
         Parameters
         ----------
-        frame : numpy.ndarray
+        frames : numpy.ndarray
             The current video frame to be processed.
 
         Returns
