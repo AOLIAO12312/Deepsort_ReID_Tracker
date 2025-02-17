@@ -18,7 +18,7 @@ if __name__ == '__main__':
         '/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/data/input/Athlete/', reset_queue, 'cpu')
 
     video_capture = cv2.VideoCapture(
-        '/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/data/input/long_video/Camera2.mp4')
+        '/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/data/input/short_version/Camera3.mp4')
 
     total_frames = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_width = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -31,16 +31,20 @@ if __name__ == '__main__':
     input_thread.start()
 
     while True:
-        ret, frame = video_capture.read()
-        if not ret:
-            break
-        tracking_results = reid_tracker.update(frame.copy())
-        draw_reid_tracking_results(tracking_results, frame)
-        cv2.imshow("Monitor", frame)
-        video_writer.write(frame)
-        cv2.waitKey(1)
-    video_capture.release()
-    video_writer.release()
-    cv2.destroyAllWindows()
+        frames = []
+        for i in range(15):
+            ret, frame = video_capture.read()
+            if not ret:
+                video_capture.release()
+                video_writer.release()
+                cv2.destroyAllWindows()
+                print(f"Processing complete, video has been saved as: {output_video_path}")
+                exit(0)
+            frames.append(frame)
+        tracking_resultses = reid_tracker.multi_frame_update(frames)
 
-    print(f"Processing complete, video has been saved as: {output_video_path}")
+        for idx,(tracking_results,frame) in enumerate(zip(tracking_resultses,frames)):
+            draw_reid_tracking_results(tracking_results, frame)
+            cv2.imshow("Monitor", frame)
+            video_writer.write(frame)
+            cv2.waitKey(1)

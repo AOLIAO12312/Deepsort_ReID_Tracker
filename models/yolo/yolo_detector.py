@@ -13,5 +13,5 @@ class YoloDetector:
         return self.detector
 
     def get_result(self,images):
-        return self.detector(images,verbose=False)[0]
+        return self.detector(images,verbose=False)
 

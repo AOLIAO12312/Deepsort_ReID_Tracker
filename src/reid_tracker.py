@@ -40,6 +40,7 @@ class ReidTracker:
         self.base_data_path = base_data_path
 
         self.block_id = {}
+        self.person_conf = {}
 
         print("Loading base data...")
         self.load_base_data()
@@ -82,6 +83,7 @@ class ReidTracker:
     def map_deepsort_to_athlete(self,tracking_results, orig_img):
         """
         Map the DeepSORT ID to the actual athlete identity ID
+
         Parameters
         ----------
         tracking_results: list
@@ -115,6 +117,7 @@ class ReidTracker:
                     cropped_image = orig_img[y1:y2, x1:x2]
                     update_tracks_image.append(cropped_image)
                     update_tracks_names.append(self.deepsort_to_athlete[deepsort_id])
+
         # Dynamically write the person's features to the database every certain number of frames and rebuild the index
         if self.frame_idx % 30 == 0:
             if not self.reset_queue.empty():
@@ -154,8 +157,79 @@ class ReidTracker:
                 mapped_results.append([*track[:4], self.deepsort_to_athlete[deepsort_id]])
             else:
                 mapped_results.append([*track[:4], f'Unknown {deepsort_id}'])
-        self.handle_lost_ids(active_ids)  # handle lost id and delete it if it lost for a long time
+        self.handle_lost_ids(active_ids)  # handle lost id and delete it lost for a long time
         return mapped_results
+
+    def multi_frame_map_deepsort_to_athlete(self, tracking_resultses, orig_imgs):
+        deepsort_id_to_images = {}
+        mapped_resultses = []
+        for idx,(tracking_results,orig_img) in enumerate(zip(tracking_resultses,orig_imgs)):
+            for tracking_result in tracking_results:
+                deepsort_id = tracking_result[4]
+                if deepsort_id in self.deepsort_to_athlete: # Skip when person was mapped
+                    continue
+                bbox = tracking_result[:4]
+                x1, y1, x2, y2 = map(int, bbox)
+                cropped_image = orig_img[y1:y2, x1:x2]
+                if deepsort_id in deepsort_id_to_images:
+                    deepsort_id_to_images[deepsort_id].append(cropped_image)
+                else:
+                    deepsort_id_to_images[deepsort_id] = [cropped_image]
+
+        # Assume 20 frames as a group
+        # if tracking id appear less than 10 frames, just discard it
+        update_names = []
+        update_images = []
+        for i,(deepsort_id,cropped_images) in enumerate(deepsort_id_to_images.items()):
+            if len(cropped_images) < 10:
+                continue
+            sliced_images = cropped_images[::4]
+            results = self.person_database.multi_frame_search(sliced_images,4)
+            for result in results:
+                if result[0] in self.deepsort_to_athlete.values():
+                    if result[1] < self.person_conf[result[0]]:
+                        for existing_deepsort_id, person in list(self.deepsort_to_athlete.items()):
+                            if person == result[0]:
+                                del self.deepsort_to_athlete[existing_deepsort_id]
+                                break
+                        self.deepsort_to_athlete[deepsort_id] = result[0]
+                        self.person_conf[result[0]] = result[1]
+                        break
+                    continue
+                else:
+                    if result[1] < 0.6:
+                        self.deepsort_to_athlete[deepsort_id] = result[0]
+                        self.person_conf[result[0]] = result[1]
+                        break
+                    else:
+                        break
+
+        tracking_results = tracking_resultses[int(len(tracking_resultses)/2)]
+        orig_img = orig_imgs[int(len(orig_imgs)/2)]
+        for track in tracking_results:
+            bbox = track[:4]
+            deepsort_id = track[4]
+            if deepsort_id in self.deepsort_to_athlete:
+                x1,y1,x2,y2 = map(int,bbox)
+                cropped_image = orig_img[y1:y2, x1:x2]
+                name = self.deepsort_to_athlete[deepsort_id]
+                update_names.append(name)
+                update_images.append(cropped_image)
+
+        self.person_database.update_person_feature_and_rebuild_index(update_names,update_images,4,[])
+
+        for idx,tracking_results in enumerate(tracking_resultses):
+            mapped_results = []
+            for tracking_result in tracking_results:
+                bbox = tracking_result[:4]
+                deepsort_id = tracking_result[4]
+                if deepsort_id in self.deepsort_to_athlete:
+                    mapped_results.append([*bbox,self.deepsort_to_athlete[deepsort_id]])
+                else:
+                    mapped_results.append([*bbox, f'Unknown {deepsort_id}'])
+            mapped_resultses.append(mapped_results)
+        return mapped_resultses
+
 
     def handle_lost_ids(self,active_ids):
         """
@@ -202,7 +276,7 @@ class ReidTracker:
                 self.bounding_box_filter = BoundingBoxFilter(bound,0.1,0.4)
                 return []
             tracker_outputs = []
-            result = self.detector.get_result(frame)
+            result = self.detector.get_result(frame)[0]
             frame, xyxy, conf = self.bounding_box_filter.box_filter(frame, result)
             if xyxy is not None:
                 xywhs = torch.empty(0, 4)
@@ -222,3 +296,75 @@ class ReidTracker:
             return mapped_results
         else:
             return []
+
+    def multi_frame_update(self, frames):
+        """
+        Processes a given series frame, detects objects, filters bounding boxes, and performs continuous tracking
+        on the detected individuals. If valid detections are found, it updates the tracker and maps the results
+        to the corresponding athletes.
+
+        Parameters
+        ----------
+        frame : numpy.ndarray
+            The current video frame to be processed.
+
+        Returns
+        -------
+        mapped_results : list
+            A list of the results where each result is mapped to a specific athlete based on the tracker output.
+            If no valid frame or detections are found, an empty list is returned.
+        """
+        if frames is not None:
+            results = self.detector.get_result(frames)
+            tracking_resultses = []
+            for idx,frame in enumerate(frames):
+                if frame is not None:
+                    if self.bounding_box_filter is None:
+                        bound = get_border(frame.copy())
+                        self.bounding_box_filter = BoundingBoxFilter(bound, 0.1, 0.4)
+                frame,xyxy,conf = self.bounding_box_filter.box_filter(frame,results[idx])
+                tracking_results = []
+                if xyxy is not None:
+                    xywhs = torch.empty(0, 4)
+                    confess = torch.empty(0, 1)
+                    for i, (bbox, confidence) in enumerate(zip(xyxy, conf)):
+                        x1, y1, x2, y2 = map(int, bbox)
+                        x_c, y_c, w, h = xyxy_to_xywh(x1, y1, x2, y2)
+                        xywhs = torch.cat((xywhs, torch.tensor([x_c, y_c, w, h]).unsqueeze(0)), dim=0)
+                        confess = torch.cat((confess, torch.tensor([confidence]).unsqueeze(0)), dim=0)
+                    # Perform continuous human tracking
+                    tracking_results = self.tracker.update(xywhs, confess, frame)
+                else:
+                    self.tracker.increment_ages()
+                tracking_resultses.append(tracking_results)
+            mapped_resultses = self.multi_frame_map_deepsort_to_athlete(tracking_resultses,frames)
+            return mapped_resultses
+        else:
+            return []
+
+
+        #     if self.bounding_box_filter is None:
+        #         bound = get_border(frame.copy())
+        #         self.bounding_box_filter = BoundingBoxFilter(bound, 0.1, 0.4)
+        #         return []
+        #     tracker_outputs = []
+        #     result = self.detector.get_result(frame)
+        #     frame, xyxy, conf = self.bounding_box_filter.box_filter(frame, result)
+        #     if xyxy is not None:
+        #         xywhs = torch.empty(0, 4)
+        #         confess = torch.empty(0, 1)
+        #         for i, (bbox, confidence) in enumerate(zip(xyxy, conf)):
+        #             x1, y1, x2, y2 = map(int, bbox)
+        #             x_c, y_c, w, h = xyxy_to_xywh(x1, y1, x2, y2)
+        #             xywhs = torch.cat((xywhs, torch.tensor([x_c, y_c, w, h]).unsqueeze(0)), dim=0)
+        #             confess = torch.cat((confess, torch.tensor([confidence]).unsqueeze(0)), dim=0)
+        #         # Perform continuous human tracking
+        #         tracker_outputs = self.tracker.update(xywhs, confess, frame)
+        #     else:
+        #         self.tracker.increment_ages()
+        #     # Map DeepSORT results to specific athlete identities
+        #     mapped_results = self.map_deepsort_to_athlete(tracker_outputs, frame)
+        #     self.frame_idx += 1
+        #     return mapped_results
+        # else:
+        #     return []
