@@ -31,32 +31,4 @@
 pip install -r requirements.txt
 ```
 
-### 使用说明
-1. 运行目标检测与跟踪：
-   ```bash
-   python track.py --input video.mp4 --output output_video.mp4
-   ```
-2. 配置DeepSORT和ReID模型参数进行调优：
-   - `--input`：输入视频文件路径
-   - `--output`：输出视频文件路径
-
-### 配置文件
-修改配置文件 `config.yaml` 以调整YOLOv11、DeepSORT和ReID模块的相关参数，确保其适应不同的应用场景。
-
-## 项目结构
-```
-|-- track.py              # 主程序文件，进行视频跟踪
-|-- detector.py           # YOLOv11目标检测实现
-|-- deepsort.py           # DeepSORT跟踪器
-|-- reid.py               # TorchReID身份识别
-|-- config.yaml           # 配置文件
-|-- requirements.txt      # 依赖库文件
-```
-
-## 贡献
-如果您有任何改进建议或问题，欢迎提交 issues 或 pull requests.
-
-## License
-MIT License
-
 ---
