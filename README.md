@@ -8,6 +8,7 @@
 **Demonstration**
 
 ![项目演示](output/tracked_video.gif)
+![项目演示2](output/tracked_video_2.gif)
 
 ## 项目概述  
 **Project Overview**  
