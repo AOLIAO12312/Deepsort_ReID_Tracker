@@ -26,7 +26,7 @@ if __name__ == '__main__':
         '/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/data/input/Athlete/',config, reset_queue, 'cpu')
 
     video_capture = cv2.VideoCapture(
-        '/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/data/input/long_video/Camera4.mp4')
+        '/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/data/input/short_version/Camera2.mp4')
 
     total_frames = int(video_capture.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_width = int(video_capture.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -40,7 +40,7 @@ if __name__ == '__main__':
     ret = True
     while True:
         frames = []
-        for i in range(1):
+        for i in range(5):
             ret, frame = video_capture.read()
             if not ret:
                 break

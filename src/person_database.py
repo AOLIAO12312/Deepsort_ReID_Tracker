@@ -1,8 +1,6 @@
 import faiss
-
 from src.person import Person
 from models.feature_extractor.custom_feature_extractor import CustomFeatureExtractor
-
 import cv2
 import numpy as np
 
@@ -55,7 +53,7 @@ def preprocess_images(image_list, target_size=(224, 224)):
 
         # 将预处理后的图像添加到结果列表中
         image_arrays.append(img_normalized)
-
+    return image_list
     return image_arrays
 
 
@@ -65,9 +63,6 @@ class PersonDatabase:
                                                 '/models/feature_extractor/weight/osnet_x1_0_imagenet.pth',
                                                 'cpu')
         self.database = []
-        self.index = None
-        self.features = []
-        self.names = []
         self.cfg = cfg
 
     def add_person(self,person_name:str, person_images):
@@ -94,21 +89,8 @@ class PersonDatabase:
                 exit(1)
         new_person.fuse_feature()
         self.database.append(new_person)
-        if new_person.get_fused_feature() is not None:
-            feature = new_person.get_fused_feature().detach().cpu().numpy().reshape(1, -1)
-            person_id = len(self.database) - 1
-            if self.index is None:
-                index = faiss.IndexFlatL2(feature.shape[1])
-                self.index = faiss.IndexIDMap(index)
-                self.index.add_with_ids(feature, np.array([len(self.database) - 1], dtype=np.int64))
-            else:
-                self.index.add_with_ids(feature, np.array([len(self.database) - 1], dtype=np.int64))
 
-            self.features.append(feature)
-            self.names.append(new_person.get_name())
-            return person_id
-
-    def update_person_feature_and_rebuild_index(self, update_names: list, update_images: list, times: int, reset_names:list):
+    def update_person_feature(self, update_names: list, update_images: list, times: int, reset_names:list):
         """
         Dynamically update person's feature vector or reset(clear) it if needed and rebuild database index
 
@@ -128,8 +110,8 @@ class PersonDatabase:
         """
         for person_name, person_image in zip(update_names, update_images):
             person_id = -1
-            for i, name in enumerate(self.names):
-                if person_name == name:
+            for i, person in enumerate(self.database):
+                if person_name == person.get_name():
                     person_id = i
                     break
             if person_id != -1:
@@ -140,32 +122,19 @@ class PersonDatabase:
                         print("Update person database error")
                         exit(1)
                 self.database[person_id].fuse_feature()
-                new_feature = self.database[person_id].get_fused_feature()
-                new_feature = new_feature.detach().cpu().numpy().reshape(-1)
-                self.features[person_id] = new_feature
-                print(f"Updated feature for person '{self.names[person_id]}' with ID: {person_id}")
             else:
                 print(f"Person '{person_name}' not found in the database.")
         person_id = -1
         for reset_name in reset_names:
-            for i, name in enumerate(self.names):
-                if reset_name == name:
+            for i, person in enumerate(self.database):
+                if reset_name == person.get_name():
                     person_id = i
                     break
             if person_id != -1:
                 self.database[person_id].clear_recent_image_and_feature()
                 self.database[person_id].fuse_feature()
-                new_feature = self.database[person_id].get_fused_feature()
-                new_feature = new_feature.detach().cpu().numpy().reshape(-1)
-                self.features[person_id] = new_feature
-                print(f"Reset feature for person '{self.names[person_id]}' with ID: {person_id}")
+                print(f"Reset feature for person '{reset_name}' with ID: {person_id}")
         # Rebuild the index
-        features_array = np.vstack(self.features)  # ensure the features if 2-dimensional
-        d = features_array.shape[1]
-        new_index = faiss.IndexFlatL2(d)
-        new_index = faiss.IndexIDMap(new_index)
-        new_index.add_with_ids(features_array, np.array(range(len(self.features)), dtype=np.int64))
-        self.index = new_index
 
     def search(self, query_image, top_k=3):
         """
@@ -211,48 +180,41 @@ class PersonDatabase:
     #             results.append((self.names[idx], distances[0][i]))
     #     return results
 
+    def calculate_similarity_and_sort(self, query_feature, top_k):
+        results = []
+        for person in self.database:
+            name = person.get_name()
+            similarity = person.calculate_cosine_similarity(query_feature)
+            results.append((name, similarity))
+
+        # 按照相似度从大到小排序，取前 top_k 个结果
+        sorted_results = sorted(results, key=lambda x: x[1], reverse=True)[:top_k]
+
+        return sorted_results
+
     def multi_frame_search(self, query_images: list, top_k=3):
-        """
-        Search for the person who has the closest L2 distance for each query image and return the top k with the smallest average distances.
+        # 存储每个人的累积相似度总和和计数
+        person_similarity = {}
 
-        Parameters
-        ----------
-        query_images: list
-            A list of query images to search.
+        if query_images is not None:
+            query_features = self.extractor.get_normalized_result(preprocess_images(query_images))
 
-        top_k: int
-            The top k closest people to return for each individual search.
+            # 遍历所有query_feature，计算相似度并累计
+            for query_feature in query_features:
+                result = self.calculate_similarity_and_sort(query_feature, top_k)
+                for name, similarity in result:
+                    if name not in person_similarity:
+                        person_similarity[name] = {'total_similarity': 0, 'count': 0}
+                    person_similarity[name]['total_similarity'] += similarity
+                    person_similarity[name]['count'] += 1
 
-        Returns
-        -------
-        results: list
-            A list of the top k people with the smallest average distance from all queries.
-        """
-        if self.index is not None:
-            total_distances = []
-            total_names = []
-            for query_image in query_images:
-                query_features = self.extractor.get_normalized_result(preprocess_images([query_image]))
-                query_feature = query_features[0].detach().cpu().numpy().reshape(1, -1)
-                distances, indices = self.index.search(query_feature, top_k)
-                # Collect the distances and corresponding names for each query image
-                for i, idx in enumerate(indices[0]):
-                    if idx != -1:
-                        total_distances.append(distances[0][i])
-                        total_names.append(self.names[idx])
+            # 计算每个人的平均相似度
+            avg_similarity = []
+            for name, data in person_similarity.items():
+                avg_sim = data['total_similarity'] / data['count']
+                avg_similarity.append((name, avg_sim))
 
-            # Calculate the mean distance for each name
-            name_to_distances = {}
-            for name, distance in zip(total_names, total_distances):
-                if name not in name_to_distances:
-                    name_to_distances[name] = []
-                name_to_distances[name].append(distance)
-            avg_distances = {name: sum(dist_list) / len(dist_list) for name, dist_list in name_to_distances.items()}
+            # 按照平均相似度从大到小排序，取前 top_k 个
+            sorted_avg_similarity = sorted(avg_similarity, key=lambda x: x[1], reverse=True)[:top_k]
 
-            # Sort people by their average distance and get the top k
-            sorted_avg_distances = sorted(avg_distances.items(), key=lambda x: x[1])
-            results = [[name, distance] for name, distance in sorted_avg_distances[:top_k]]
-
-            return results
-        else:
-            return []
+            return sorted_avg_similarity

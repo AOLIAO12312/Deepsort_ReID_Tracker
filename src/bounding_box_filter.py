@@ -13,7 +13,8 @@ class BoundingBoxFilter:
 
 
     def box_filter(self,frame,result):
-        orig_img = frame.copy()
+        frame = frame.copy()
+        orig_img = frame
         detections = result.boxes.xywhn.cpu().numpy()
         confidences = result.boxes.conf.cpu().numpy()
         class_ids = result.boxes.cls.cpu().numpy()

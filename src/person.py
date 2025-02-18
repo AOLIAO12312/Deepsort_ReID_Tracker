@@ -1,5 +1,6 @@
 import torch
 from collections import deque
+import torch.nn.functional as F
 
 
 class Person:
@@ -57,7 +58,7 @@ class Person:
     def fuse_feature(self):
         all_features = self.get_all_features()
         if all_features:
-            self.fused_feature = torch.mean(torch.stack(all_features), dim=0)  # 平均值特征融合
+            self.fused_feature = torch.mean(torch.stack(all_features), dim=0)
         else:
             print(f"No features available for fusion for {self.name}.")
 
@@ -65,3 +66,7 @@ class Person:
         if self.fused_feature is None:
             print(f"Fused feature for {self.name} is not computed yet.")
         return self.fused_feature
+
+    def calculate_cosine_similarity(self, query_feature):
+        similarity = F.cosine_similarity(query_feature.unsqueeze(0), self.fused_feature.unsqueeze(0))
+        return similarity
