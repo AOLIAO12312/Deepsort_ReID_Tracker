@@ -15,8 +15,8 @@
 本项目结合了 **DeepSORT** 和 **TorchReID** 实现了高效的多人物跟踪与身份识别系统，特别适用于复杂环境中，如遮挡严重或跟踪丢失后的快速恢复身份。通过整合 **YOLOv11** 进行目标检测和 **DeepSORT** 进行多帧目标跟踪，本系统可以实时追踪运动场上的运动员，并在DeepSORT跟踪失败后，使用TorchReID进行重新识别，保证身份一致性。  
 This project integrates **DeepSORT** and **TorchReID** to create an efficient multi-person tracking and identification system, especially suited for complex environments, such as when occlusions are severe or identity needs to be quickly recovered after tracking loss. By combining **YOLOv11** for object detection and **DeepSORT** for multi-frame tracking, the system can track athletes on a sports field in real-time, and in case of DeepSORT tracking failure, TorchReID can be used for fast identity recovery, ensuring identity consistency.
 
-## 核心功能  
-**Core Features**  
+## 核心功能
+**Core Features**
 - **YOLOv11**：进行实时目标检测，快速识别和定位运动员。  
   **YOLOv11**: Real-time object detection for quick identification and localization of athletes.  
 - **DeepSORT**：高效的目标跟踪，确保每个运动员的连续跟踪，并提供唯一身份ID。  

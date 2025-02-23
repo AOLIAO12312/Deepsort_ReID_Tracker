@@ -1,6 +1,7 @@
 import glob
 import os
 import cv2
+import numpy as np
 import torch
 from models.yolo.yolo_detector import YoloDetector
 from models.deep_sort_pytorch.deepsort_tracker import DeepsortTracker
@@ -45,6 +46,7 @@ class ReidTracker:
         self.name_seq = 1
         print("Loading base data...")
         self.load_base_data()
+        self.matrix = None
 
 
     def load_base_data(self):
@@ -333,6 +335,9 @@ class ReidTracker:
         else:
             return []
 
+    def get_matrix(self):
+        return self.matrix
+
     def multi_frame_update(self, frames):
         """
         Processes a given series frame, detects objects, filters bounding boxes, and performs continuous tracking
@@ -341,7 +346,7 @@ class ReidTracker:
 
         Parameters
         ----------
-        frames : numpy.ndarray
+        frames : list
             The current video frame to be processed.
 
         Returns
@@ -358,6 +363,11 @@ class ReidTracker:
                     if self.bounding_box_filter is None:
                         bound = get_border(frame.copy())
                         self.bounding_box_filter = BoundingBoxFilter(bound, 0.1, 0.4)
+                        width, height = 650, 500
+                        pts_dst = np.array([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
+                                           dtype='float32')
+                        pts_src = np.array(bound, dtype='float32')
+                        self.matrix = cv2.getPerspectiveTransform(pts_src, pts_dst)
                 frame,xyxy,conf = self.bounding_box_filter.box_filter(frame,results[idx])
                 tracking_results = []
                 if xyxy is not None:

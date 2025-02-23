@@ -12,9 +12,9 @@ reid_tracker:
   LOST_THRESHOLD: 15
   frame_batch_size: 15
   limit_min_L2distance: 0.43
-  min_conf: 0.72
+  min_conf: 0.7
   reinforce_tensity: 5
-  sample_density: 3
+  sample_density: 12
 
 person_database:
   base_size: 10
