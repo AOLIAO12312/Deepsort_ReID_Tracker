@@ -12,8 +12,8 @@
 
 ## 项目概述  
 **Project Overview**  
-本项目结合了 **DeepSORT** 和 **TorchReID** 实现了高效的多人物跟踪与身份识别系统，特别适用于复杂环境中，如遮挡严重或跟踪丢失后的快速恢复身份。通过整合 **YOLOv11** 进行目标检测和 **DeepSORT** 进行多帧目标跟踪，本系统可以实时追踪运动场上的运动员，并在DeepSORT跟踪失败后，使用TorchReID进行重新识别，保证身份一致性。  
-This project integrates **DeepSORT** and **TorchReID** to create an efficient multi-person tracking and identification system, especially suited for complex environments, such as when occlusions are severe or identity needs to be quickly recovered after tracking loss. By combining **YOLOv11** for object detection and **DeepSORT** for multi-frame tracking, the system can track athletes on a sports field in real-time, and in case of DeepSORT tracking failure, TorchReID can be used for fast identity recovery, ensuring identity consistency.
+本项目结合了 **DeepSORT** 和 **TorchReID** 实现了高效的多人物跟踪与身份识别系统，特别适用于复杂环境中，如遮挡严重或跟踪丢失后的快速恢复身份。通过整合 **YOLOv11** 进行目标检测和 **DeepSORT** 进行多帧目标跟踪，本系统可以高效实时追踪运动场上的运动员，并保证身份一致性。  
+This project integrates **DeepSORT** and **TorchReID** to create an efficient multi-person tracking and identification system, especially suited for complex environments, such as when occlusions are severe or identity needs to be quickly recovered after tracking loss. By combining **YOLOv11** for object detection and **DeepSORT** for multi-frame tracking, the system can track athletes on a sports field in real-time, ensuring identity consistency.
 
 ## 核心功能
 **Core Features**
@@ -21,8 +21,8 @@ This project integrates **DeepSORT** and **TorchReID** to create an efficient mu
   **YOLOv11**: Real-time object detection for quick identification and localization of athletes.  
 - **DeepSORT**：高效的目标跟踪，确保每个运动员的连续跟踪，并提供唯一身份ID。  
   **DeepSORT**: Efficient tracking of targets to ensure continuous tracking of each athlete, providing a unique identity ID.  
-- **TorchReID**：在DeepSORT丢失目标时，利用ReID进行快速身份恢复，确保跟踪过程中的身份一致性。  
-  **TorchReID**: When DeepSORT fails to track a target, TorchReID is used for fast identity recovery, ensuring identity consistency throughout the tracking process.  
+- **TorchReID**：确保跟踪过程中的身份一致性。  
+  **TorchReID**: Ensuring identity consistency throughout the tracking process.  
 - **多帧融合跟踪**：增强跟踪的鲁棒性，在复杂环境中保持高准确度，即使在遮挡或目标快速变换位置时也能有效跟踪。  
   **Multi-frame Fusion Tracking**: Enhances tracking robustness, maintaining high accuracy in complex environments, even when occlusions occur or targets move quickly.
 
