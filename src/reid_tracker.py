@@ -245,16 +245,17 @@ class ReidTracker:
                 update_names.append(name)
                 update_images.append(cropped_image)
 
-        if not self.reset_queue.empty():
-            user_input = self.reset_queue.get()
-            print(f"\nWaiting for {user_input} information to be reset...")
-            self.person_database.update_person_feature(update_names,update_images,self.cfg['reid_tracker']['reinforce_tensity'],[user_input])
-            existing_deepsort_ids = [k for k, v in self.deepsort_to_athlete.items() if v == user_input]
-            if len(existing_deepsort_ids) > 0:
-                del self.deepsort_to_athlete[existing_deepsort_ids[0]]
-                self.block_id[existing_deepsort_ids[0]] = user_input
-        else:
-            self.person_database.update_person_feature(update_names,update_images,self.cfg['reid_tracker']['reinforce_tensity'],[])
+        if self.frame_idx % 60 == 0:
+            if not self.reset_queue.empty():
+                user_input = self.reset_queue.get()
+                print(f"\nWaiting for {user_input} information to be reset...")
+                self.person_database.update_person_feature(update_names,update_images,self.cfg['reid_tracker']['reinforce_tensity'],[user_input])
+                existing_deepsort_ids = [k for k, v in self.deepsort_to_athlete.items() if v == user_input]
+                if len(existing_deepsort_ids) > 0:
+                    del self.deepsort_to_athlete[existing_deepsort_ids[0]]
+                    self.block_id[existing_deepsort_ids[0]] = user_input
+            else:
+                self.person_database.update_person_feature(update_names,update_images,self.cfg['reid_tracker']['reinforce_tensity'],[])
 
         for idx,tracking_results in enumerate(tracking_resultses):
             mapped_results = []
@@ -338,7 +339,7 @@ class ReidTracker:
     def get_matrix(self):
         return self.matrix
 
-    def multi_frame_update(self, frames):
+    def multi_frame_update(self, frames : list):
         """
         Processes a given series frame, detects objects, filters bounding boxes, and performs continuous tracking
         on the detected individuals. If valid detections are found, it updates the tracker and maps the results
@@ -384,33 +385,7 @@ class ReidTracker:
                     self.tracker.increment_ages()
                 tracking_resultses.append(tracking_results)
             mapped_resultses = self.multi_frame_map_deepsort_to_athlete(tracking_resultses,frames)
+            self.frame_idx += len(frames)
             return mapped_resultses
         else:
             return []
-
-
-        #     if self.bounding_box_filter is None:
-        #         bound = get_border(frame.copy())
-        #         self.bounding_box_filter = BoundingBoxFilter(bound, 0.1, 0.4)
-        #         return []
-        #     tracker_outputs = []
-        #     result = self.detector.get_result(frame)
-        #     frame, xyxy, conf = self.bounding_box_filter.box_filter(frame, result)
-        #     if xyxy is not None:
-        #         xywhs = torch.empty(0, 4)
-        #         confess = torch.empty(0, 1)
-        #         for i, (bbox, confidence) in enumerate(zip(xyxy, conf)):
-        #             x1, y1, x2, y2 = map(int, bbox)
-        #             x_c, y_c, w, h = xyxy_to_xywh(x1, y1, x2, y2)
-        #             xywhs = torch.cat((xywhs, torch.tensor([x_c, y_c, w, h]).unsqueeze(0)), dim=0)
-        #             confess = torch.cat((confess, torch.tensor([confidence]).unsqueeze(0)), dim=0)
-        #         # Perform continuous human tracking
-        #         tracker_outputs = self.tracker.update(xywhs, confess, frame)
-        #     else:
-        #         self.tracker.increment_ages()
-        #     # Map DeepSORT results to specific athlete identities
-        #     mapped_results = self.map_deepsort_to_athlete(tracker_outputs, frame)
-        #     self.frame_idx += 1
-        #     return mapped_results
-        # else:
-        #     return []

@@ -41,7 +41,6 @@ class BirdEyeView:
     def __init__(self):
         self.field = draw_field()
         self.bounding_box_filter = None
-        self.model = YOLO("/Volumes/Disk_1/ApplicationData/PythonProject/ReID-Tracker/models/yolo/weights/yolo11n.pt")
         self.matrix = None
 
     def draw_bird_view(self,tracking_results):

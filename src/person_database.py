@@ -1,4 +1,3 @@
-import faiss
 from src.person import Person
 from models.feature_extractor.custom_feature_extractor import CustomFeatureExtractor
 import cv2
@@ -61,7 +60,7 @@ class PersonDatabase:
     def __init__(self,cfg):
         self.extractor = CustomFeatureExtractor('osnet_x1_0',
                                                 '/models/feature_extractor/weight/osnet_x1_0_imagenet.pth',
-                                                'cpu')
+                                                'cuda:0')
         self.database = []
         self.cfg = cfg
 
@@ -157,49 +156,19 @@ class PersonDatabase:
                 results.append((self.names[idx], distances[0][i]))
         return results
 
-    # def multi_frame_search(self, query_images:list, top_k=3):
-    #     """
-    #     Search for the person who has the closest L2 distance of the query image
-    #
-    #     Parameters
-    #     ----------
-    #     query_images: list
-    #
-    #     top_k: int
-    #         The top k close person need to be return
-    #
-    #     """
-    #     # Try to use more images to get fused feature, and improve the accuracy
-    #     query_features = self.extractor.get_normalized_result(query_images)
-    #     fused_feature = torch.mean(torch.stack(list(query_features)), dim=0)
-    #     query_feature = fused_feature.detach().cpu().numpy().reshape(1, -1)
-    #     distances, indices = self.index.search(query_feature, top_k)
-    #     results = []
-    #     for i, idx in enumerate(indices[0]):
-    #         if idx != -1:
-    #             results.append((self.names[idx], distances[0][i]))
-    #     return results
-
     def calculate_similarity_and_sort(self, query_feature, top_k):
         results = []
         for person in self.database:
             name = person.get_name()
             similarity = person.calculate_cosine_similarity(query_feature)
             results.append((name, similarity))
-
-        # 按照相似度从大到小排序，取前 top_k 个结果
         sorted_results = sorted(results, key=lambda x: x[1], reverse=True)[:top_k]
-
         return sorted_results
 
     def multi_frame_search(self, query_images: list, top_k=3):
-        # 存储每个人的累积相似度总和和计数
         person_similarity = {}
-
         if query_images is not None:
             query_features = self.extractor.get_normalized_result(preprocess_images(query_images))
-
-            # 遍历所有query_feature，计算相似度并累计
             for query_feature in query_features:
                 result = self.calculate_similarity_and_sort(query_feature, top_k)
                 for name, similarity in result:
@@ -207,14 +176,9 @@ class PersonDatabase:
                         person_similarity[name] = {'total_similarity': 0, 'count': 0}
                     person_similarity[name]['total_similarity'] += similarity
                     person_similarity[name]['count'] += 1
-
-            # 计算每个人的平均相似度
             avg_similarity = []
             for name, data in person_similarity.items():
                 avg_sim = data['total_similarity'] / data['count']
                 avg_similarity.append((name, avg_sim))
-
-            # 按照平均相似度从大到小排序，取前 top_k 个
             sorted_avg_similarity = sorted(avg_similarity, key=lambda x: x[1], reverse=True)[:top_k]
-
             return sorted_avg_similarity
