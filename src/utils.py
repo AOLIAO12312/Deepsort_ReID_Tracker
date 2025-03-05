@@ -120,7 +120,7 @@ def match_photos_to_persons(distances):
     backtrack_match(distances, 0, [], 0, best_result)
     return best_result[1], best_result[0]
 
-def get_border(frame):
+def get_border(frame,camera_name):
     """
     Initialize the boundary and return the border
     """
@@ -134,15 +134,15 @@ def get_border(frame):
             cv2.circle(frame, (x, y), 5, (0, 0, 255), -1)
             points.append((x, y))
             print(f"Point clicked: ({x}, {y})")
-            cv2.imshow("Boundary select", frame)
+            cv2.imshow("Boundary select"+camera_name, frame)
             if len(points) == 4:
                 print("Four points selected: ", points)
                 done = True
-    cv2.imshow("Boundary select", frame)
-    cv2.setMouseCallback("Boundary select", click_event)
+    cv2.imshow("Boundary select"+camera_name, frame)
+    cv2.setMouseCallback("Boundary select"+camera_name, click_event)
     while not done:
         cv2.waitKey(1)
-    cv2.destroyAllWindows()
+    cv2.destroyWindow("Boundary select"+camera_name)
 
     print("Final points:", points)
     return points

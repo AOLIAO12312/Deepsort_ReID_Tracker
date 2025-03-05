@@ -21,39 +21,39 @@ def preprocess_images(image_list, target_size=(224, 224)):
     image_arrays: list
         经过预处理后的图像 numpy.ndarray 列表，可以直接用于特征提取。
     """
-    image_arrays = []
-
-    for image in image_list:
-        # 1. 去噪处理（高斯滤波）
-        img_denoised = cv2.GaussianBlur(image, (5, 5), 0)
-
-        # 2. 锐化处理（拉普拉斯算子）
-        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-        img_sharpened = cv2.filter2D(img_denoised, -1, kernel)
-
-        # 3. 人物区域裁剪（假设已经知道人物区域，若没有可以使用背景分割）
-        # 使用简化版：裁剪图像中间区域。实际应用中，可以用深度学习背景分割进行人物区域提取
-        h, w = img_sharpened.shape[:2]
-        center_x, center_y = w // 2, h // 2
-        crop_size = min(h, w) // 2
-        img_cropped = img_sharpened[
-                      center_y - crop_size: center_y + crop_size,
-                      center_x - crop_size: center_x + crop_size
-                      ]
-
-        # 4. 统一调整大小
-        img_resized = cv2.resize(img_cropped, target_size)
-
-        # 5. 转换为RGB格式
-        img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
-
-        # 6. 数据归一化，标准化为 [0, 1] 范围，适合预训练模型
-        img_normalized = img_rgb / 255.0
-
-        # 将预处理后的图像添加到结果列表中
-        image_arrays.append(img_normalized)
+    # image_arrays = []
+    #
+    # for image in image_list:
+    #     # 1. 去噪处理（高斯滤波）
+    #     img_denoised = cv2.GaussianBlur(image, (5, 5), 0)
+    #
+    #     # 2. 锐化处理（拉普拉斯算子）
+    #     kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+    #     img_sharpened = cv2.filter2D(img_denoised, -1, kernel)
+    #
+    #     # 3. 人物区域裁剪（假设已经知道人物区域，若没有可以使用背景分割）
+    #     # 使用简化版：裁剪图像中间区域。实际应用中，可以用深度学习背景分割进行人物区域提取
+    #     h, w = img_sharpened.shape[:2]
+    #     center_x, center_y = w // 2, h // 2
+    #     crop_size = min(h, w) // 2
+    #     img_cropped = img_sharpened[
+    #                   center_y - crop_size: center_y + crop_size,
+    #                   center_x - crop_size: center_x + crop_size
+    #                   ]
+    #
+    #     # 4. 统一调整大小
+    #     img_resized = cv2.resize(img_cropped, target_size)
+    #
+    #     # 5. 转换为RGB格式
+    #     img_rgb = cv2.cvtColor(img_resized, cv2.COLOR_BGR2RGB)
+    #
+    #     # 6. 数据归一化，标准化为 [0, 1] 范围，适合预训练模型
+    #     img_normalized = img_rgb / 255.0
+    #
+    #     # 将预处理后的图像添加到结果列表中
+    #     image_arrays.append(img_normalized)
     return image_list
-    return image_arrays
+    # return image_arrays
 
 
 class PersonDatabase:

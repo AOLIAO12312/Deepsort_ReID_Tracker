@@ -1,8 +1,5 @@
 import cv2
 import numpy as np
-from ultralytics import YOLO
-from src.bounding_box_filter import BoundingBoxFilter
-from src.utils import get_border
 
 def draw_field():
     # 1. 设定比例尺 & 场地参数
@@ -60,8 +57,7 @@ class BirdEyeView:
                     player_x, player_y = point[0], point[1]
                     mapped_x = int(player_x + 50)
                     mapped_y = int(player_y + 50)
-                    cv2.circle(field, (mapped_x, mapped_y), 7, (0, 0, 255), -1)  # 画一个半径为7的红色圆
-                    # 使用tracking_results[i][4]的数据绘制每个点的ID
+                    cv2.circle(field, (mapped_x, mapped_y), 7, (0, 0, 255), -1)
                     cv2.putText(field, tracking_results[i][4], (mapped_x + 10, mapped_y - 10),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
                 return field

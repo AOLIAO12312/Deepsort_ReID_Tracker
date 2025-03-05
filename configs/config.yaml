@@ -13,9 +13,9 @@ reid_tracker:
   frame_batch_size: 15
   limit_min_L2distance: 0.43
   min_conf: 0.7
-  reinforce_tensity: 2
-  sample_density: 12
+  reinforce_tensity: 1
+  sample_density: 5
 
 person_database:
-  base_size: 10
-  recent_size: 30
+  base_size: 5
+  recent_size: 5
