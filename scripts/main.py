@@ -1,7 +1,5 @@
 import threading
-
 import numpy as np
-
 from models.yolo.yolo_detector import YoloDetector
 import cv2
 import queue
@@ -17,10 +15,10 @@ def load_config(config_path:str):
         config = yaml.safe_load(file)
     return config
 
-def wait_for_input():
-    while True:
-        user_input = input("Please enter the person needs to be reset:")
-        reset_queue.put(user_input)
+# def wait_for_input():
+#     while True:
+#         user_input = input("Please enter the person needs to be reset:")
+#         reset_queue.put(user_input)
 
 config = load_config("E:\Deepsort_ReID_Tracker\configs\config.yaml")
 
@@ -38,12 +36,23 @@ def read_frame_and_track(video_capture,reid_tracker,camera_results_queue):
             break
         frames.append(frame)
     if not ret:
-        print("Read Frame Finish")
-        exit(0)
+        camera_results_queue.put((None, None))
     tracking_resultses = reid_tracker.multi_frame_update(frames)
     camera_results_queue.put((frames,tracking_resultses))
 
-def conbine_field_and_frame(field,frame,tracking_results):
+def conbine_field_and_frame(field,frame,tracking_results,bound):
+    pt1 = bound[0]
+    pt2 = bound[1]
+    pt3 = bound[2]
+    pt4 = bound[3]
+
+    color = (68, 70, 254)
+    thickness = 2
+
+    cv2.line(frame, pt1, pt2, color, thickness)
+    cv2.line(frame, pt2, pt3, color, thickness)
+    cv2.line(frame, pt3, pt4, color, thickness)
+    cv2.line(frame, pt1, pt4, color, thickness)
     draw_reid_tracking_results(tracking_results, frame)
     scale_factor = 0.55
     field_resized = cv2.resize(field, (0, 0), fx=scale_factor, fy=scale_factor)
@@ -59,7 +68,9 @@ def conbine_field_and_frame(field,frame,tracking_results):
 
 
 def compute_iou(box1, box2):
-    """计算两个边界框的 IoU（Intersection over Union）"""
+    """
+    Intersection over Union
+    """
     x1, y1, x2, y2 = box1
     x3, y3, x4, y4 = box2
 
@@ -108,17 +119,19 @@ def check_contact(tracking_results_group, iou_threshold=0.1, score_threshold=200
 
 
 if __name__ == '__main__':
-
+    # 加载目标检测器
     detector_1 = YoloDetector(config['yolo']['model_path'], 'cuda:0')
     detector_2 = YoloDetector(config['yolo']['model_path'], 'cuda:0')
     detector_3 = YoloDetector(config['yolo']['model_path'], 'cuda:0')
     detector_4 = YoloDetector(config['yolo']['model_path'], 'cuda:0')
 
+    # 加载鸟瞰图生成器
     bird_view_1 = BirdEyeView()
     bird_view_2 = BirdEyeView()
     bird_view_3 = BirdEyeView()
     bird_view_4 = BirdEyeView()
 
+    # 加载人物跟踪识别器
     reid_tracker_1 = ReidTracker(detector_1,config['deepsort']['deepsort_cfg_path'],
                                                 'E:\Deepsort_ReID_Tracker\data\input\Camera1_base_data',config, reset_queue,"camera1" ,'cuda:0')
     reid_tracker_2 = ReidTracker(detector_2, config['deepsort']['deepsort_cfg_path'],
@@ -128,6 +141,7 @@ if __name__ == '__main__':
     reid_tracker_4 = ReidTracker(detector_4, config['deepsort']['deepsort_cfg_path'],
                                  'E:\Deepsort_ReID_Tracker\data\input\Camera4_base_data', config, reset_queue, "camera4",'cuda:0')
 
+    # 初始化视频输入流
     video_capture_1 = cv2.VideoCapture(
         'E:\Deepsort_ReID_Tracker\data\input\short_version\Camera1.mp4')
     video_capture_2 = cv2.VideoCapture(
@@ -138,25 +152,30 @@ if __name__ == '__main__':
         'E:\Deepsort_ReID_Tracker\data\input\short_version\Camera4.mp4')
 
 
-    # total_frames = int(video_capture_1.get(cv2.CAP_PROP_FRAME_COUNT))
-    # frame_width = int(video_capture_1.get(cv2.CAP_PROP_FRAME_WIDTH))
-    # frame_height = int(video_capture_1.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    # output_video_path = 'E:/Deepsort_ReID_Tracker/data/output/tracked_video_GRID.mp4'
-    # fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    # video_writer_1 = cv2.VideoWriter(output_video_path, fourcc, 30, (frame_width, frame_height))
-    # video_writer_2 = cv2.VideoWriter(output_video_path + str(2), fourcc, 30, (frame_width, frame_height))
-    # video_writer_3 = cv2.VideoWriter(output_video_path + str(3), fourcc, 30, (frame_width, frame_height))
-    # video_writer_4 = cv2.VideoWriter(output_video_path + str(4), fourcc, 30, (frame_width, frame_height))
+    total_frames = int(video_capture_1.get(cv2.CAP_PROP_FRAME_COUNT))
+    frame_width = int(video_capture_1.get(cv2.CAP_PROP_FRAME_WIDTH))
+    frame_height = int(video_capture_1.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    output_video_path = 'E:/Deepsort_ReID_Tracker/data/output/tracked_video_GRID.mp4'
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    video_writer = cv2.VideoWriter(output_video_path, fourcc, 30, (frame_width, frame_height))
 
 
     # input_thread = threading.Thread(target=wait_for_input, daemon=True)
     # input_thread.start()
 
+    # 帧数记录
     frame_idx = 0
     output_dir = f"E:/Deepsort_ReID_Tracker/data/output/keyframe/"
 
-    while True:
+    # bound初始化
+    bound1 = []
+    bound2 = []
+    bound3 = []
+    bound4 = []
 
+
+    while True:
+        # 创建4个线程用于读取四个机位的视频数据，并执行人物跟踪与识别
         track_thread_1 = threading.Thread(target=read_frame_and_track,
                                           args=(video_capture_1,reid_tracker_1,camera1_results_queue))
         track_thread_2 = threading.Thread(target=read_frame_and_track,
@@ -165,45 +184,59 @@ if __name__ == '__main__':
                                           args=(video_capture_3, reid_tracker_3, camera3_results_queue))
         track_thread_4 = threading.Thread(target=read_frame_and_track,
                                           args=(video_capture_4, reid_tracker_4, camera4_results_queue))
+
+        # 启动线程
         track_thread_1.start()
         track_thread_2.start()
         track_thread_3.start()
         track_thread_4.start()
 
+        # 等待4个线程处理完毕
         track_thread_1.join()
         track_thread_2.join()
         track_thread_3.join()
         track_thread_4.join()
 
+        # 从4个摄像头的结果数据队列中读取视频数据
         frames_1,tracking_resultses_1 = camera1_results_queue.get()
         frames_2,tracking_resultses_2 = camera2_results_queue.get()
         frames_3,tracking_resultses_3 = camera3_results_queue.get()
         frames_4,tracking_resultses_4 = camera4_results_queue.get()
 
-        if bird_view_1.matrix is None:
+        # 若返回None则表示视频读取结束
+        if frames_1 is None or frames_2 is None or frames_3 is None or frames_4 is None:
+            break
+
+        # 第0帧时获取filter的bound数据,初始化从tracker中获取鸟瞰图的生成器的视角转换矩阵
+        if frame_idx == 0:
+            bound1 = reid_tracker_1.bounding_box_filter.bound
+            bound2 = reid_tracker_2.bounding_box_filter.bound
+            bound3 = reid_tracker_3.bounding_box_filter.bound
+            bound4 = reid_tracker_4.bounding_box_filter.bound
             bird_view_1.matrix = reid_tracker_1.matrix
-        if bird_view_2.matrix is None:
             bird_view_2.matrix = reid_tracker_2.matrix
-        if bird_view_3.matrix is None:
             bird_view_3.matrix = reid_tracker_3.matrix
-        if bird_view_4.matrix is None:
             bird_view_4.matrix = reid_tracker_4.matrix
 
+        # 遍历一个批次的视频视频数据（15帧）
         for idx, (tracking_results_1,tracking_results_2,tracking_results_3,tracking_results_4) in enumerate(zip(tracking_resultses_1,tracking_resultses_2,tracking_resultses_3,tracking_resultses_4)):
+            # 绘制鸟瞰图
             field1 = bird_view_1.draw_bird_view(tracking_results_1)
             field2 = bird_view_2.draw_bird_view(tracking_results_2)
             field3 = bird_view_3.draw_bird_view(tracking_results_3)
             field4 = bird_view_4.draw_bird_view(tracking_results_4)
 
-            monitor_1 = conbine_field_and_frame(field1, frames_1[idx].copy(), tracking_results_1)
-            monitor_2 = conbine_field_and_frame(field2, frames_2[idx].copy(), tracking_results_2)
-            monitor_3 = conbine_field_and_frame(field3, frames_3[idx].copy(), tracking_results_3)
-            monitor_4 = conbine_field_and_frame(field4, frames_4[idx].copy(), tracking_results_4)
+            # 将鸟瞰图放置在帧的左下角用于展示与输出
+            monitor_1 = conbine_field_and_frame(field1, frames_1[idx].copy(), tracking_results_1,bound1)
+            monitor_2 = conbine_field_and_frame(field2, frames_2[idx].copy(), tracking_results_2,bound2)
+            monitor_3 = conbine_field_and_frame(field3, frames_3[idx].copy(), tracking_results_3,bound3)
+            monitor_4 = conbine_field_and_frame(field4, frames_4[idx].copy(), tracking_results_4,bound4)
 
+            # 检测碰撞，ret为True则检测到碰撞，False则未检测到，用于关键帧提取
             group = [tracking_results_1,tracking_results_2,tracking_results_3,tracking_results_4]
             ret = check_contact(group)
-            if ret is True: # 接触判定代码段
 
+            if ret is True: # 接触判定代码段
                 print(f"Keyframe = {frame_idx} extracted")
                 filename = f"{output_dir}camera1/collision_frame_idx={frame_idx}.jpg"
                 cv2.imwrite(filename, frames_1[idx])
@@ -214,20 +247,29 @@ if __name__ == '__main__':
                 filename = f"{output_dir}camera4/collision_frame_idx={frame_idx}.jpg"
                 cv2.imwrite(filename, frames_4[idx])
 
-            # 2 * 2 concat
+            # 2 * 2 拼接
             h1 = np.hstack((monitor_1, monitor_2))
             h2 = np.hstack((monitor_3, monitor_4))
             grid = np.vstack((h1, h2))
-            # cv2.imshow("Monitor1", monitor_1)
-            # cv2.imshow("Monitor2", monitor_2)
-            # cv2.imshow("Monitor3", monitor_3)
-            # cv2.imshow("Monitor4", monitor_4)
+
+            # 图像过大，进行放缩
             scale = 0.5
             grid_resized = cv2.resize(grid, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
             cv2.imshow("Monitor Grid", grid_resized)
             cv2.waitKey(1)
-            # video_writer_1.write(grid_resized)
+
+            # 写入视频数据
+            video_writer.write(grid_resized)
             frame_idx += 1
+
+    video_capture_1.release()
+    video_capture_2.release()
+    video_capture_3.release()
+    video_capture_4.release()
+    video_writer.release()
+    cv2.destroyAllWindows()
+    print(f"Processing complete, video has been saved as: {output_video_path}")
+
 
     # ret = True
     # while True:
