@@ -49,6 +49,10 @@ class ReidTracker:
         self.load_base_data()
         self.matrix = None
 
+        self.bounds = {'camera1':[(126, 287), (700, 112), (1118, 192), (726, 704)],
+                       'camera2':[(494, 719), (244, 160), (632, 93), (1189, 273)],
+                       'camera3':[(1130, 158), (760, 686), (140, 249), (709, 64)],
+                       'camera4':[(542, 147), (1089, 277), (587, 718), (148, 244)]}
 
     def load_base_data(self):
         """
@@ -364,7 +368,8 @@ class ReidTracker:
             for idx,frame in enumerate(frames):
                 if frame is not None:
                     if self.bounding_box_filter is None:
-                        bound = get_border(frame.copy(),self.name)
+                        # bound = get_border(frame.copy(),self.name)
+                        bound = self.bounds[self.name]
                         self.bounding_box_filter = BoundingBoxFilter(bound, 0.1, 0.4)
                         width, height = 650, 500
                         pts_dst = np.array([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
