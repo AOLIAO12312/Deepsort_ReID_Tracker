@@ -132,7 +132,7 @@ class PersonDatabase:
             if person_id != -1:
                 self.database[person_id].clear_recent_image_and_feature()
                 self.database[person_id].fuse_feature()
-                print(f"Reset feature for person '{reset_name}' with ID: {person_id}")
+                # print(f"Reset feature for person '{reset_name}' with ID: {person_id}")
         # Rebuild the index
 
     def search(self, query_image, top_k=3):

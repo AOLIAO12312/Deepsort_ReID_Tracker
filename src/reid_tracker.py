@@ -11,7 +11,7 @@ from src.utils import get_border
 
 class ReidTracker:
     # Initialize ReidTracker
-    def __init__(self,detector,deepsort_cfg_path,base_data_path,cfg,reset_queue,name,device):
+    def __init__(self,detector,deepsort_cfg_path,base_data_path,cfg,reset_queue,fix_queue,name,device):
         # Initialize yolo detector
         print("Loading object detector...")
         self.detector = detector
@@ -37,6 +37,7 @@ class ReidTracker:
 
         # Queue for receiving external input that requires to reset personnel
         self.reset_queue = reset_queue
+        self.fix_queue = fix_queue
 
         self.bounding_box_filter = None
         self.base_data_path = base_data_path
@@ -45,14 +46,20 @@ class ReidTracker:
         self.block_id = {}
         self.person_conf = {}
         self.name_seq = 1
-        print("Loading base data...")
-        self.load_base_data()
-        self.matrix = None
 
+        if self.base_data_path is not None:
+            print("Pre-assigned mode")
+            print("Loading base data...")
+            self.load_base_data()
+        else:
+            print("Automatic Mode")
+        self.matrix = None
+        self.device = device
         self.bounds = {'camera1':[(126, 287), (700, 112), (1118, 192), (726, 704)],
                        'camera2':[(494, 719), (244, 160), (632, 93), (1189, 273)],
                        'camera3':[(1130, 158), (760, 686), (140, 249), (709, 64)],
-                       'camera4':[(542, 147), (1089, 277), (587, 718), (148, 244)]}
+                       'camera4':[(535, 150), (1089, 277), (587, 718), (148, 244)]}
+        self.bounding_box_filter = None
 
     def load_base_data(self):
         """
@@ -130,7 +137,7 @@ class ReidTracker:
         if self.frame_idx % 30 == 0:
             if not self.reset_queue.empty():
                 user_input = self.reset_queue.get()
-                print(f"\nWaiting for {user_input} information to be reset...")
+                # print(f"\nWaiting for {user_input} information to be reset...")
                 self.person_database.update_person_feature_and_rebuild_index(update_tracks_names, update_tracks_image, 3,
                                                                         [user_input])
                 existing_deepsort_ids = [k for k, v in self.deepsort_to_athlete.items() if v == user_input]
@@ -171,6 +178,19 @@ class ReidTracker:
     def multi_frame_map_deepsort_to_athlete(self, tracking_resultses, orig_imgs):
         deepsort_id_to_images = {}
         mapped_resultses = []
+
+        # Fix error by fused data
+        while not self.fix_queue.empty():
+            data = self.fix_queue.get()  # 取出队列中的一个元素
+            identity, closest_id = list(data.items())[0]  # 解析字典
+
+            # 在 self.deepsort_to_athlete 字典中查找 identity 所在的键
+            for key, value in self.deepsort_to_athlete.items():
+                if value == identity:
+                    del self.deepsort_to_athlete[key]
+                    break  # 找到后立即跳出循环
+
+
         for idx,(tracking_results,orig_img) in enumerate(zip(tracking_resultses,orig_imgs)):
             for tracking_result in tracking_results:
                 deepsort_id = tracking_result[4]
@@ -186,7 +206,6 @@ class ReidTracker:
 
         # Assume 15 frames as a group
         # if tracking id appear less than half frames, discard it
-
         for i,(deepsort_id,cropped_images) in enumerate(deepsort_id_to_images.items()):
             if len(cropped_images) < int(len(cropped_images)/2):
                 continue
@@ -194,7 +213,12 @@ class ReidTracker:
             # cv2.imshow("identify",sliced_images[0])
             # cv2.waitKey(0)
             # cv2.destroyWindow("identify")
-            results = self.person_database.multi_frame_search(sliced_images,4)
+            results = self.person_database.multi_frame_search(sliced_images,3)
+            if len(results) == 0:
+                self.person_database.add_person(f"Person_{self.name_seq}", sliced_images)
+                self.deepsort_to_athlete[deepsort_id] = f"Person_{self.name_seq}"
+                self.person_conf[f"Person_{self.name_seq}"] = 1
+                self.name_seq += 1
             for result in results:
                 if deepsort_id in self.block_id:
                     if self.block_id[deepsort_id] == result[0]:
@@ -230,11 +254,11 @@ class ReidTracker:
                         self.person_conf[result[0]] = result[1]
                         break
                 else:
-                    # if self.name_seq < 10:
-                    #     self.person_database.add_person(f"Person_{self.name_seq}",sliced_images)
-                    #     self.deepsort_to_athlete[deepsort_id] = f"Person_{self.name_seq}"
-                    #     self.person_conf[f"Person_{self.name_seq}"] = 1
-                    #     self.name_seq += 1
+                    if self.base_data_path is None and self.name_seq < 1000:
+                        self.person_database.add_person(f"Person_{self.name_seq}",sliced_images)
+                        self.deepsort_to_athlete[deepsort_id] = f"Person_{self.name_seq}"
+                        self.person_conf[f"Person_{self.name_seq}"] = 1
+                        self.name_seq += 1
                     break
 
         if self.frame_idx % 60 == 0:
@@ -253,13 +277,15 @@ class ReidTracker:
                     update_images.append(cropped_image)
 
             if not self.reset_queue.empty():
-                user_input = self.reset_queue.get()
-                print(f"\nWaiting for {user_input} information to be reset...")
-                self.person_database.update_person_feature(update_names,update_images,self.cfg['reid_tracker']['reinforce_tensity'],[user_input])
-                existing_deepsort_ids = [k for k, v in self.deepsort_to_athlete.items() if v == user_input]
-                if len(existing_deepsort_ids) > 0:
-                    del self.deepsort_to_athlete[existing_deepsort_ids[0]]
-                    self.block_id[existing_deepsort_ids[0]] = user_input
+                # Get people need to be reset and reset it
+                while not self.reset_queue.empty():
+                    user_input = self.reset_queue.get()
+                    # print(f"\n{self.name}:Waiting for {user_input} information to be reset...")
+                    self.person_database.update_person_feature(update_names,update_images,self.cfg['reid_tracker']['reinforce_tensity'],[user_input])
+                    existing_deepsort_ids = [k for k, v in self.deepsort_to_athlete.items() if v == user_input]
+                    if len(existing_deepsort_ids) > 0:
+                        del self.deepsort_to_athlete[existing_deepsort_ids[0]]
+                        self.block_id[existing_deepsort_ids[0]] = user_input
             else:
                 self.person_database.update_person_feature(update_names,update_images,self.cfg['reid_tracker']['reinforce_tensity'],[])
 
@@ -319,7 +345,6 @@ class ReidTracker:
             if self.bounding_box_filter is None:
                 bound = get_border(frame.copy())
                 self.bounding_box_filter = BoundingBoxFilter(bound,0.1,0.4)
-                return []
             tracker_outputs = []
             result = self.detector.get_result(frame)[0]
             frame, xyxy, conf = self.bounding_box_filter.box_filter(frame, result)
