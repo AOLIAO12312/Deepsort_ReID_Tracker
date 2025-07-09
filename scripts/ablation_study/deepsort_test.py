@@ -25,7 +25,7 @@ if __name__ == '__main__':
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     video_writer2 = cv2.VideoWriter(output_video_path, fourcc, 30, (frame_width, frame_height))
 
-    bounding_box_filter = BoundingBoxFilter([(0,0),(frame_width,0),(frame_width,frame_height),(0,frame_height)], 0.1, 0.4)
+    bounding_box_filter = BoundingBoxFilter([(1130, 158), (760, 686), (140, 249), (709, 64)], 0.1, 0.4)
 
 
     with tqdm(total=total_frames, desc="Processing Video", unit="frame") as pbar:

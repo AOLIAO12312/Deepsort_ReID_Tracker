@@ -1,6 +1,8 @@
 import json
 
-from tqdm import tqdm
+from matplotlib import pyplot as plt
+from sklearn.metrics import confusion_matrix
+import seaborn as sns
 
 
 def load_json(file_path):
@@ -106,7 +108,7 @@ def calculate_id_metrics(gt_data, test_data):
                 correct_id_rate_count += 1
 
     id_accuracy = correct_id_count / total_id_count if total_id_count > 0 else 0
-    mota = 1 - ((fn_count + fp_count + (total_id_count - correct_id_count)) / total_id_count)
+    mota = 1 - ((IDFN + IDFP + (total_id_count - correct_id_count)) / total_id_count)
     motp = iou_total / matched_count if matched_count > 0 else 0
     IDF1 = (2 * IDTP) / (2 * IDTP + IDFP + IDFN)
     Rcll = IDTP/(IDTP + IDFN)
@@ -117,9 +119,11 @@ def calculate_id_metrics(gt_data, test_data):
 
 
 
+
+
 if __name__ == "__main__":
-    gt_file = "E:\\Deepsort_ReID_Tracker\\scripts\\ablation_study\\benchmark_data\\camera1_basedata.json"  # 标准文件
-    test_file = "E:\\Deepsort_ReID_Tracker\\scripts\\ablation_study\\test_data\\No_Fusion\\camera1_test_no_fusion.json"  # 测试文件
+    gt_file = "E:\\Deepsort_ReID_Tracker\\scripts\\ablation_study\\benchmark_data\\camera3_basedata.json"  # 标准文件
+    test_file = "E:\\Deepsort_ReID_Tracker\\scripts\\ablation_study\\test_data\\No_Fusion\\camera3_test_no_fusion.json"  # 测试文件
 
     gt_data = load_json(gt_file)
     test_data = load_json(test_file)
@@ -128,7 +132,6 @@ if __name__ == "__main__":
 
     print(f"MOTA: {mota:.2%}")
     print(f"MOTP: {motp:.2%}")
-    print(f"ID Accuracy: {id_accuracy:.2%}")
     print(f"Rcll: {Rcll:.2%}")
     print(f"Prcn: {Prcn:.2%}")
     print(f"IDF1: {IDF1:.2%}")

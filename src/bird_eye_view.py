@@ -105,7 +105,7 @@ class BirdEyeView:
                 # print(f"第{i}次循环")
                 eye_position.append([mapped_x,mapped_y,tracking_results[i][4]])
                 cv2.circle(field, (mapped_x, mapped_y), 7, (0, 0, 255), -1)
-                cv2.putText(field, tracking_results[i][4], (mapped_x + 10, mapped_y - 10),
+                cv2.putText(field, str(tracking_results[i][4]), (mapped_x + 10, mapped_y - 10),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2, cv2.LINE_AA)
             return field
         else:

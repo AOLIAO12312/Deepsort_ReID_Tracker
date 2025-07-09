@@ -1,6 +1,11 @@
 import threading
 import numpy as np
+import torch
 from tqdm import tqdm
+from types import SimpleNamespace
+from alphapose.utils.config import update_config # 读取配置文件
+from alphapose.utils.detector import DetectionLoader
+from detector.apis import get_detector
 
 from models.yolo.yolo_detector import YoloDetector
 import cv2
@@ -45,6 +50,7 @@ camera4_fix_queue = queue.Queue()
 def read_frame_and_track(video_capture,reid_tracker,camera_results_queue):
     ret = True
     frames = []
+    # 一次处理15帧
     for i in range(15):
         ret, frame = video_capture.read()
         if not ret:
@@ -126,10 +132,10 @@ def check_contact(tracking_results_group, iou_threshold=0.1, score_threshold=200
                             return True  # 立即返回关键帧
     return False  # 低于阈值，不是关键帧
 
-json_writer1 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera1_test_no_fusion.json")
-json_writer2 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera2_test_no_fusion.json")
-json_writer3 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera3_test_no_fusion.json")
-json_writer4 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera4_test_no_fusion.json")
+json_writer1 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera1_short.json")
+json_writer2 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera2_short.json")
+json_writer3 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera3_short.json")
+json_writer4 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera4_short.json")
 
 if __name__ == '__main__':
     camera_name = ["camera1","camera2","camera3","camera4"]
@@ -159,32 +165,33 @@ if __name__ == '__main__':
 
     # 初始化视频输入流
     video_capture_1 = cv2.VideoCapture(
-        'E:\Deepsort_ReID_Tracker\data\input\long_video\Camera1.mp4')
+        'E:\Deepsort_ReID_Tracker\data\input\short_version\Camera1.mp4')
     video_capture_2 = cv2.VideoCapture(
-        'E:\Deepsort_ReID_Tracker\data\input\long_video\Camera2.mp4')
+        'E:\Deepsort_ReID_Tracker\data\input\short_version\Camera2.mp4')
     video_capture_3 = cv2.VideoCapture(
-        'E:\Deepsort_ReID_Tracker\data\input\long_video\Camera3.mp4')
+        'E:\Deepsort_ReID_Tracker\data\input\short_version\Camera3.mp4')
     video_capture_4 = cv2.VideoCapture(
-        'E:\Deepsort_ReID_Tracker\data\input\long_video\Camera4.mp4')
+        'E:\Deepsort_ReID_Tracker\data\input\short_version\Camera4.mp4')
+
 
     camera_fusion = CameraFusion()
 
     total_frames = int(video_capture_1.get(cv2.CAP_PROP_FRAME_COUNT))
     frame_width = int(video_capture_1.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(video_capture_1.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    output_video_path = 'E:/Deepsort_ReID_Tracker/data/output/ablation_output/tracked_video_MIXED.mp4'
-    output_video_path2 = 'E:/Deepsort_ReID_Tracker/data/output/ablation_output/tracked_video_GRID.mp4'
+    output_video_path = 'E:/Deepsort_ReID_Tracker/data/output/ablation_output/tracked_video_MIXED_short.mp4'
+    output_video_path2 = 'E:/Deepsort_ReID_Tracker/data/output/ablation_output/tracked_video_GRID_short.mp4'
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     video_writer = cv2.VideoWriter(output_video_path, fourcc, 30, (750, 600))
     video_writer2 = cv2.VideoWriter(output_video_path2, fourcc, 30, (frame_width, frame_height))
 
-    video_writer_camera1 = cv2.VideoWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\ablation_output\\camera1.mp4",
+    video_writer_camera1 = cv2.VideoWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\ablation_output\\camera1_short.mp4",
                                            fourcc,30,(frame_width, frame_height))
-    video_writer_camera2 = cv2.VideoWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\ablation_output\\camera2.mp4",
+    video_writer_camera2 = cv2.VideoWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\ablation_output\\camera2_short.mp4",
                                            fourcc, 30, (frame_width, frame_height))
-    video_writer_camera3 = cv2.VideoWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\ablation_output\\camera3.mp4",
+    video_writer_camera3 = cv2.VideoWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\ablation_output\\camera3_short.mp4",
                                            fourcc, 30, (frame_width, frame_height))
-    video_writer_camera4 = cv2.VideoWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\ablation_output\\camera4.mp4",
+    video_writer_camera4 = cv2.VideoWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\ablation_output\\camera4_short.mp4",
                                            fourcc, 30, (frame_width, frame_height))
 
 
@@ -314,9 +321,9 @@ if __name__ == '__main__':
                 scale = 0.5
                 grid_resized = cv2.resize(grid, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
-                # cv2.imshow("Monitor Grid", grid_resized)
-                # cv2.imshow("mixed-camera",mix_field)
-                # cv2.waitKey(1)
+                cv2.imshow("Monitor Grid", grid_resized)
+                cv2.imshow("mixed-camera",mix_field)
+                cv2.waitKey(1)
 
 
                 # 写入视频数据

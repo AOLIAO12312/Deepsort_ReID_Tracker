@@ -48,8 +48,8 @@ class ReidTracker:
         self.name_seq = 1
 
         if self.base_data_path is not None:
-            print("Pre-assigned mode")
-            print("Loading base data...")
+            # print("Pre-assigned mode")
+            # print("Loading base data...")
             self.load_base_data()
         else:
             print("Automatic Mode")
@@ -59,6 +59,12 @@ class ReidTracker:
                        'camera2':[(494, 719), (244, 160), (632, 93), (1189, 273)],
                        'camera3':[(1130, 158), (760, 686), (140, 249), (709, 64)],
                        'camera4':[(535, 150), (1089, 277), (587, 718), (148, 244)]}
+
+        # # 测试无目标过滤器
+        # self.bounds = {'camera1': [(0, 0), (1280, 0), (1280, 720), (0, 720)],
+        #                'camera2': [(0, 0), (1280, 0), (1280, 720), (0, 720)],
+        #                'camera3': [(0, 0), (1280, 0), (1280, 720), (0, 720)],
+        #                'camera4': [(0, 0), (1280, 0), (1280, 720), (0, 720)]}
         self.bounding_box_filter = None
 
     def load_base_data(self):
@@ -75,7 +81,7 @@ class ReidTracker:
                 image_paths = sorted(glob.glob(os.path.join(folder_path, "*.png")))
                 images = [cv2.imread(img_path) for img_path in image_paths]
                 self.person_database.add_person(folder_name, images)
-                print(f"Added person: {folder_name} with {len(images)} images.")
+                # print(f"Added person: {folder_name} with {len(images)} images.")
 
     def identify(self,cropped_images:list):
         """
@@ -188,7 +194,7 @@ class ReidTracker:
             for key, value in self.deepsort_to_athlete.items():
                 if value == identity:
                     del self.deepsort_to_athlete[key]
-                    break  # 找到后立即跳出循环
+                    break
 
 
         for idx,(tracking_results,orig_img) in enumerate(zip(tracking_resultses,orig_imgs)):
@@ -299,6 +305,11 @@ class ReidTracker:
                 else:
                     mapped_results.append([*bbox, f'Unknown {deepsort_id}'])
             mapped_resultses.append(mapped_results)
+
+        # # 用于测试仅使用ReID
+        # self.deepsort_to_athlete = {} # 强制清理历史记录，每次重新识别
+        # self.person_conf = {}
+
         return mapped_resultses
 
 
@@ -361,7 +372,12 @@ class ReidTracker:
             else:
                 self.tracker.increment_ages()
             # Map DeepSORT results to specific athlete identities
+
             mapped_results = self.map_deepsort_to_athlete(tracker_outputs, frame)
+
+
+
+
             self.frame_idx += 1
             return mapped_results
         else:
@@ -388,21 +404,44 @@ class ReidTracker:
             If no valid frame or detections are found, an empty list is returned.
         """
         if frames is not None:
+            # imgs = []
+            # orig_dim_list = []
+
+            # for frame in frames:
+            #     h, w = frame.shape[:2]
+            #     orig_dim_list.append([w, h, w, h])
+            #
+            #     img_tensor = self.detector.image_preprocess(frame)
+            #     if isinstance(img_tensor, np.ndarray):
+            #         img_tensor = torch.from_numpy(img_tensor)
+            #     if img_tensor.dim() == 3:
+            #         img_tensor = img_tensor.unsqueeze(0)
+            #
+            #     imgs.append(img_tensor)
+            #
+            # imgs = torch.cat(imgs, dim=0)
+            # orig_dim_list = torch.FloatTensor(orig_dim_list)  # (b, 4)
+            #
+            # # 将预处理后的图像送入检测器
+            # dets = self.detector.images_detection(imgs, orig_dim_list)
+
             results = self.detector.get_result(frames)
+
             tracking_resultses = []
             for idx,frame in enumerate(frames):
                 if frame is not None:
                     if self.bounding_box_filter is None:
                         # bound = get_border(frame.copy(),self.name)
                         bound = self.bounds[self.name]
-                        self.bounding_box_filter = BoundingBoxFilter(bound, 0.1, 0.4)
+                        self.bounding_box_filter = BoundingBoxFilter(bound, 0.05, 0.3)
                         width, height = 650, 500
                         pts_dst = np.array([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
                                            dtype='float32')
                         pts_src = np.array(bound, dtype='float32')
                         self.matrix = cv2.getPerspectiveTransform(pts_src, pts_dst)
+                # 筛选有效目标
                 frame,xyxy,conf = self.bounding_box_filter.box_filter(frame,results[idx])
-                tracking_results = []
+                tracking_results = np.empty((0, 5), dtype=object)
                 if xyxy is not None:
                     xywhs = torch.empty(0, 4)
                     confess = torch.empty(0, 1)
@@ -415,8 +454,16 @@ class ReidTracker:
                     tracking_results = self.tracker.update(xywhs, confess, frame)
                 else:
                     self.tracker.increment_ages()
+
+                # 测试deepsort
+                # if type(tracking_results) is ndarray:
+                #     tracking_results = tracking_results.tolist()
+                # for i in range(len(tracking_results)):
+                #     tracking_results[i][4] = str(tracking_results[i][4])
                 tracking_resultses.append(tracking_results)
+            # 测试仅使用deepsort
             mapped_resultses = self.multi_frame_map_deepsort_to_athlete(tracking_resultses,frames)
+            # mapped_resultses = tracking_resultses
             self.frame_idx += len(frames)
             return mapped_resultses
         else:

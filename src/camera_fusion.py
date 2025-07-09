@@ -322,7 +322,7 @@ class CameraFusion:
                                 self.single_camera_position["camera4"])
         return self.most_recent_final_position
 
-    def find_difference_and_feedback(self, tracking_results, reset_queue,fix_queue,camera_name, threshold=100):
+    def find_difference_and_feedback(self, tracking_results, reset_queue,fix_queue,camera_name, threshold=50):
         if self.most_recent_final_position is None:
             return  # 如果没有最终位置数据，则不做处理
         tracking_results = tracking_results.copy()
@@ -337,14 +337,12 @@ class CameraFusion:
                     final_x, final_y = final_position_dict[identity]
                     # 计算欧几里得距离
                     distance = np.sqrt((x - final_x) ** 2 + (y - final_y) ** 2)
-
                     if distance > threshold:
                         if self.mismatch_dict[camera_name] < 15:
                             self.mismatch_dict[camera_name] += 1
                         else:
                             reset_queue.put(identity)  # 记录偏离较远的ID信息
                             self.mismatch_dict[camera_name] = 0
-
                     del final_position_dict[identity]
                 else:
                     unmatched_track.append(track)
