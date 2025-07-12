@@ -74,6 +74,25 @@ class BoundingBoxFilter:
         for p1, p2 in zip(self.bound, self.bound[1:] + [self.bound[0]]):
             cv2.line(frame, p1, p2, (68, 70, 254), 2)
 
+        # 第一版（稳定版）
+        # # Create polygon mask directly from points
+        # mask = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8)
+        # cv2.fillPoly(mask, [np.array(self.bound)], 255)
+        #
+        # xyxy_list = []
+        # conf_list = []
+        #
+        # for (x1, y1, x2, y2), confidence in zip(person_detections, person_confidences):
+        #     bottom_edge_roi = mask[y2 - 2:y2, x1:x2]
+        #     if bottom_edge_roi.size == 0:
+        #         continue
+        #     mask_percentage = np.sum(bottom_edge_roi == 255) / bottom_edge_roi.size
+        #     if mask_percentage > self.limit_percentage:
+        #         xyxy_list.append([x1, y1, x2, y2])
+        #         conf_list.append(confidence)
+
+        # 第二版（测试中）
+        # 根据目标和边界框相交的具体情况筛选
         # Create polygon mask directly from points
         mask = np.zeros((frame.shape[0], frame.shape[1]), dtype=np.uint8)
         cv2.fillPoly(mask, [np.array(self.bound)], 255)
@@ -82,13 +101,36 @@ class BoundingBoxFilter:
         conf_list = []
 
         for (x1, y1, x2, y2), confidence in zip(person_detections, person_confidences):
-            bottom_edge_roi = mask[y2 - 2:y2, x1:x2]
+            # 防止框超出图像边界
+            x1 = max(0, int(x1))
+            y1 = max(0, int(y1))
+            x2 = min(frame.shape[1], int(x2))
+            y2 = min(frame.shape[0], int(y2))
+
+            # 扩大底部 ROI 区域高度：例如从底部向上取5个像素
+            roi_height = 20
+            roi_top = max(0, y2 - roi_height)
+            bottom_edge_roi = mask[roi_top:y2, x1:x2]
+
+            # 如果 ROI 区域为空，跳过（防止除以0）
             if bottom_edge_roi.size == 0:
                 continue
+
+            # 计算 ROI 区域中处于多边形区域（白色255）的像素比例
             mask_percentage = np.sum(bottom_edge_roi == 255) / bottom_edge_roi.size
+
+            # 如果超过阈值，则认为这个人位于多边形区域内
             if mask_percentage > self.limit_percentage:
                 xyxy_list.append([x1, y1, x2, y2])
                 conf_list.append(confidence)
+
+                # Debug 可视化（绿色框表示保留）
+                # cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            else:
+                # Debug 可视化（红色框表示过滤）
+                # cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 1)
+                pass
+
 
         xyxy_tensor = torch.tensor(xyxy_list) if xyxy_list else torch.empty((0, 4))
         conf_tensor = torch.tensor(conf_list) if conf_list else torch.empty((0,))

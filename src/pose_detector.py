@@ -1,11 +1,5 @@
 
-from alphapose.models import builder # 装载姿态模型的核心包
-from alphapose.utils.config import update_config # 读取配置文件
-
-from types import SimpleNamespace
-import torch
 from alphapose.utils.presets import SimpleTransform, SimpleTransform3DSMPL
-from tqdm import tqdm
 import numpy as np
 
 from alphapose.models import builder # 装载姿态模型的核心包
@@ -13,16 +7,18 @@ from alphapose.utils.config import update_config # 读取配置文件
 
 from types import SimpleNamespace
 import torch
-from alphapose.utils.detector import DetectionLoader
-from detector.apis import get_detector
 from alphapose.utils.transforms import get_func_heatmap_to_coord
 
 
 
 # 定义args字面量
 args = SimpleNamespace(
-    cfg='configs/halpe_coco_wholebody_136/resnet/256x192_res50_lr1e-3_2x-regression.yaml',
-    checkpoint='pretrained_models/multi_domain_fast50_regression_256x192.pth',
+    # cfg='configs/halpe_coco_wholebody_136/resnet/256x192_res50_lr1e-3_2x-regression.yaml',
+    # checkpoint='pretrained_models/multi_domain_fast50_regression_256x192.pth',
+    # 133关节点模型
+    cfg='configs/halpe_26/resnet/256x192_res50_lr1e-3_1x.yaml',
+    checkpoint='pretrained_models/halpe26_fast_res50_256x192.pth',
+    # 26关节点模型
     sp=True,
     detector='yolo',
     detfile='',

@@ -2,7 +2,7 @@ deepsort:
   deepsort_cfg_path: "E:/Deepsort_ReID_Tracker/configs/deep_sort.yaml"
 
 yolo:
-  model_path: "E:/Deepsort_ReID_Tracker/models/yolo/weights/yolo11n.pt"
+  model_path: "E:/Deepsort_ReID_Tracker/models/yolo/weights/yolov8s.pt"
 
 extractor:
   extractor_name: "osnet_x1_0"

@@ -83,6 +83,13 @@ class BirdEyeView:
         self.bounding_box_filter = None
         self.matrix = None
 
+
+    def bbox2coord(self,positions:list):
+        # 测试中
+        positions = np.array([positions], dtype=np.float32)
+        transformed_point = cv2.perspectiveTransform(positions, self.matrix)
+        return transformed_point[0]
+
     def draw_bird_view(self,tracking_results,eye_position):
         positions = []
         for tracking_result in tracking_results:
@@ -94,11 +101,15 @@ class BirdEyeView:
             # eye_position.append([cx,cy,tracking_result[4]])
             # print(cx,cy,tracking_result[4])
         if len(positions) != 0:
-            positions = np.array([positions], dtype=np.float32)
-            transformed_point = cv2.perspectiveTransform(positions, self.matrix)
+            # 第一版
+            # positions = np.array([positions], dtype=np.float32)
+            # transformed_point = cv2.perspectiveTransform(positions, self.matrix)
+
+            # 第二版：测试中
+            transformed_point = self.bbox2coord(positions)
             # print(transformed_point)
             field = self.field.copy()
-            for i,point in enumerate(transformed_point[0]):
+            for i,point in enumerate(transformed_point):
                 player_x, player_y = point[0], point[1]
                 mapped_x = int(player_x + 50)
                 mapped_y = int(player_y + 50)

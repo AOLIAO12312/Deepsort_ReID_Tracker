@@ -32,7 +32,7 @@ def load_png_images_from_folder(folder_path):
 if __name__ == '__main__':
     pose_detector = pose_detector.PoseDetector()
 
-    folder = r"E:\Deepsort_ReID_Tracker\data\input\Athlete\5"
+    folder = r"E:\Deepsort_ReID_Tracker\data\input\Athlete\1"
     frames = load_png_images_from_folder(folder)
 
     print(f"共读取到 {len(frames)} 张图片")
@@ -50,7 +50,7 @@ if __name__ == '__main__':
         for x, y in keypoints:
             # 只画合法坐标点（>0）
             if x > 0 and y > 0:
-                cv2.circle(frame, (int(x), int(y)), radius=3, color=(0, 255, 0), thickness=-1)
+                cv2.circle(frame, (int(x), int(y)), radius=2, color=(0, 255, 0), thickness=-1)
 
         cv2.imshow(f"Pose {i+1}", frame)
         key = cv2.waitKey(0)  # 按任意键继续

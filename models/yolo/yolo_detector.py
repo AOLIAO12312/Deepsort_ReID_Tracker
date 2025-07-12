@@ -81,7 +81,11 @@ class YoloDetector:
         # self.model.eval()
 
     def get_result(self,frames):
-        return self.detector(frames,verbose=False)
+        return self.detector.predict(frames,conf=0.01,       # 超低置信度阈值
+                                            iou=0.3,         # 更宽松的NMS抑制
+                                            classes=[0],     # 只检测 person
+                                            agnostic_nms=True,  # 类别无关NMS（避免互相抑制）
+                                            verbose=False)
 
     def image_preprocess(self, img_source):
         """

@@ -433,7 +433,7 @@ class ReidTracker:
                     if self.bounding_box_filter is None:
                         # bound = get_border(frame.copy(),self.name)
                         bound = self.bounds[self.name]
-                        self.bounding_box_filter = BoundingBoxFilter(bound, 0.05, 0.3)
+                        self.bounding_box_filter = BoundingBoxFilter(bound, 0.1, 0.35)
                         width, height = 650, 500
                         pts_dst = np.array([[0, 0], [width - 1, 0], [width - 1, height - 1], [0, height - 1]],
                                            dtype='float32')

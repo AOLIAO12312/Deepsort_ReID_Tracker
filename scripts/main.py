@@ -7,16 +7,21 @@ from alphapose.utils.config import update_config # 读取配置文件
 from alphapose.utils.detector import DetectionLoader
 from detector.apis import get_detector
 
+
 from models.yolo.yolo_detector import YoloDetector
 import cv2
 import queue
+
+from src.state_analyzer import save_person_state_to_csv
 
 from src.camera_fusion import CameraFusion
 from src.reid_tracker import ReidTracker
 import yaml
 from src.bird_eye_view import BirdEyeView
+from src.state_analyzer import StateAnalyzer
 from src.utils import draw_reid_tracking_results
 from src.json_writer import JsonWriter
+from src.pose_detector import PoseDetector
 
 reset_queue = queue.Queue()
 
@@ -50,7 +55,7 @@ camera4_fix_queue = queue.Queue()
 def read_frame_and_track(video_capture,reid_tracker,camera_results_queue):
     ret = True
     frames = []
-    # 一次处理15帧
+    # 一次处理10帧
     for i in range(15):
         ret, frame = video_capture.read()
         if not ret:
@@ -126,19 +131,135 @@ def check_contact(tracking_results_group, iou_threshold=0.1, score_threshold=200
                     iou, area1, area2 = compute_iou(box1, box2)
                     if iou > iou_threshold:
                         weight = min(area1, area2)  # 取较小目标框
-                        contact_score += iou * weight  # 关键修改
+                        contact_score += iou * weight  # 计算接触评分
                         if contact_score >= score_threshold:
-                            print(f"camera{camera_idx + 1},id1 = {id1},id2 = {id2},weight = {weight},iou = {iou},score = {contact_score},frame_idx = {frame_idx}")
+                            # print(f"camera{camera_idx + 1},id1 = {id1},id2 = {id2},weight = {weight},iou = {iou},score = {contact_score},frame_idx = {frame_idx}")
                             return True  # 立即返回关键帧
     return False  # 低于阈值，不是关键帧
 
-json_writer1 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera1_short.json")
-json_writer2 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera2_short.json")
-json_writer3 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera3_short.json")
-json_writer4 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera4_short.json")
+
+def frame_pose_detection(frame,tracking_results,pose_detector):
+    """对输入的帧检测每个目标的姿态"""
+    if len(tracking_results) == 0:
+        return frame, None
+    # 1.截取需要姿态检测的裁切图片
+    person_pic = []
+    pose_results = []
+    for tracking_result in tracking_results:
+        bbox = tracking_result[:4]
+        id = tracking_result[4]
+        x1, y1, x2, y2 = map(int, bbox)  # 确保是整数索引
+        cropped_image = frame[y1:y2, x1:x2]  # 注意：先y后x
+        person_pic.append((cropped_image, id))
+    # 2.推理姿态
+    pose_results = pose_detector.get_result(img for img, _ in person_pic)
+
+    # # 3.1 在每个裁切图上绘制关节点(测试用)
+    # for i,(frame,id) in enumerate(person_pic_1):
+    #     keypoints = pose_results_1[i]['keypoints']  # shape: (26, 2)
+    #     if isinstance(keypoints, torch.Tensor):
+    #         keypoints = keypoints.detach().cpu().numpy()
+    #
+    #     for x, y in keypoints:
+    #         # 只画合法坐标点（>0）
+    #         if x > 0 and y > 0:
+    #             cv2.circle(frame, (int(x), int(y)), radius=2, color=(0, 255, 0), thickness=-1)
+    #
+    #     cv2.imshow(f"Pose {id}", frame)
+    #     key = cv2.waitKey(0)  # 按任意键继续
+    #     if key == 27:  # ESC退出
+    #         break
+    #     cv2.destroyAllWindows()
+
+    # 3.2 在帧上绘制汇总的关节点（运行时输出关节点图像）
+    for i, tracking_result in enumerate(tracking_results):
+        bbox = tracking_result[:4]
+        id = tracking_result[4]
+        x1, y1, x2, y2 = map(int, bbox)
+        keypoints = pose_results[i]['keypoints']  # shape: (26, 2)
+        if isinstance(keypoints, torch.Tensor):
+            keypoints = keypoints.detach().cpu().numpy()
+        draw_reid_tracking_results(tracking_results, frame)
+        for x, y in keypoints:
+            # 只画合法坐标点（>0）
+            if int(x) + x1 > 0 and int(y) + y1 > 0:
+                cv2.circle(frame, (int(x) + x1, int(y) + y1), radius=2, color=(0, 255, 0), thickness=-1)
+    # cv2.imshow(f"Keyframe{idx},Camera_1", frame)
+    # key = cv2.waitKey(0)  # 按任意键继续
+    # if key == 27:  # ESC退出
+    #     return
+    # cv2.destroyAllWindows()
+    return frame, pose_results
+
+
+import numpy as np
+
+def assign_unknown_ids_by_mapping(tracking_results, final_positions, bird_view,
+                                   offset=(50, 50), distance_threshold=10000):
+    """
+    给分视角 tracking_results 中的 Unknown 目标分配 ID，避免重复使用其他摄像头或本摄像头已有的 ID。
+
+    参数:
+    - tracking_results: List[List]，每个元素为 [x1, y1, x2, y2, id]
+    - final_positions: List[Tuple[float, float, str]]，融合后的全局坐标 + id
+    - bird_view: 具有 .bbox2coord() 方法的对象，用于视角坐标 → 全局映射
+    - offset: Tuple[int, int]，可用于微调映射坐标，如 (50, 50)
+    - distance_threshold: float，最大允许匹配距离平方，避免误配
+    - used_ids: set，其他摄像头已分配的 ID，避免冲突
+
+    返回:
+    - updated_tracking_results: List[List]，填充后的 tracking_results
+    - newly_used_ids: set，新分配的 ID 集合（用于更新 used_ids）
+    """
+    newly_used_ids = set()
+    offset_x, offset_y = offset
+
+    # 收集当前摄像头中已存在的 ID（非 Unknown）
+    existing_ids_in_current_frame = set(
+        str(result[4]) for result in tracking_results if not str(result[4]).startswith("U")
+    )
+
+    for tracking_result in tracking_results:
+        bbox = tracking_result[:4]
+        original_id = tracking_result[4]
+
+        if str(original_id).startswith("U"):
+            cx = (bbox[0] + bbox[2]) / 2
+            cy = bbox[3]  # bottom center
+            transformed_point = bird_view.bbox2coord([[cx, cy]])
+            mapped_x = int(transformed_point[0][0] + offset_x)
+            mapped_y = int(transformed_point[0][1] + offset_y)
+
+            closest_id = None
+            closest_distance_sq = float('inf')
+
+            for final_x, final_y, final_id in final_positions:
+                if (final_id in newly_used_ids or
+                    final_id in existing_ids_in_current_frame):
+                    continue  # 已被使用或本摄像头已存在
+
+                dist_sq = (final_x - mapped_x)**2 + (final_y - mapped_y)**2
+                if dist_sq < closest_distance_sq:
+                    closest_distance_sq = dist_sq
+                    closest_id = final_id
+
+            if closest_id is not None and closest_distance_sq < distance_threshold:
+                tracking_result[4] = closest_id
+                newly_used_ids.add(closest_id)
+
+    return tracking_results
+
+
+
+# json_writer1 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera1_short.json")
+# json_writer2 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera2_short.json")
+# json_writer3 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera3_short.json")
+# json_writer4 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera4_short.json")
 
 if __name__ == '__main__':
     camera_name = ["camera1","camera2","camera3","camera4"]
+    pose_detector = PoseDetector()
+    state_analyzer = StateAnalyzer()
 
     # 加载目标检测器
     detector_1 = YoloDetector(config['yolo']['model_path'], 'cuda:0')
@@ -256,40 +377,69 @@ if __name__ == '__main__':
                 bird_view_3.matrix = reid_tracker_3.matrix
                 bird_view_4.matrix = reid_tracker_4.matrix
 
-            list1 = []
-            list2 = []
-            list3 = []
-            list4 = []
+
             # 遍历一个批次的视频视频数据（15帧）
             for idx, (tracking_results_1,tracking_results_2,tracking_results_3,tracking_results_4) in enumerate(zip(tracking_resultses_1,tracking_resultses_2,tracking_resultses_3,tracking_resultses_4)):
-                json_writer1.update(tracking_results_1,frame_idx)
-                json_writer2.update(tracking_results_2, frame_idx)
-                json_writer3.update(tracking_results_3, frame_idx)
-                json_writer4.update(tracking_results_4, frame_idx)
-
+                # json_writer1.update(tracking_results_1,frame_idx)
+                # json_writer2.update(tracking_results_2, frame_idx)
+                # json_writer3.update(tracking_results_3, frame_idx)
+                # json_writer4.update(tracking_results_4, frame_idx)
 
                 list1 = []
                 list2 = []
                 list3 = []
                 list4 = []
+
                 # 绘制鸟瞰图
-                field1 = bird_view_1.draw_bird_view(tracking_results_1,list1)
-                field2 = bird_view_2.draw_bird_view(tracking_results_2,list2)
-                field3 = bird_view_3.draw_bird_view(tracking_results_3,list3)
-                field4 = bird_view_4.draw_bird_view(tracking_results_4,list4)
+                field1 = bird_view_1.draw_bird_view(tracking_results_1, list1)
+                field2 = bird_view_2.draw_bird_view(tracking_results_2, list2)
+                field3 = bird_view_3.draw_bird_view(tracking_results_3, list3)
+                field4 = bird_view_4.draw_bird_view(tracking_results_4, list4)
 
                 # 更新摄像头数据
-                camera_fusion.update_single_camera_position(camera_name[0],list1)
-                camera_fusion.update_single_camera_position(camera_name[1],list2)
+                camera_fusion.update_single_camera_position(camera_name[0], list1)
+                camera_fusion.update_single_camera_position(camera_name[1], list2)
                 camera_fusion.update_single_camera_position(camera_name[2], list3)
                 camera_fusion.update_single_camera_position(camera_name[3], list4)
 
                 # 计算摄像头融合数据
                 final_position = camera_fusion.fuse_position()
 
+                # 更新场景数据进行比赛分析
+                state_analyzer.update(final_position)
+
+                persons_state = state_analyzer.get_persons_state()
+
+                save_person_state_to_csv(persons_state, frame_idx, "data/output/keyframe/person_states.csv",
+                                         first_write=state_analyzer.first_write)
+                state_analyzer.first_write = False
+
+                # for person in persons_state:
+                #     print(f"frame_idx {frame_idx}")
+                #     print(f"运动员 ID: {person.id}")
+                #     print(f"  位置: {person.position}")
+                #     print(f"  速度: {person.velocity:.2f} m/s")
+                #     print(f"  加速度: {person.acceleration:.2f} m/s²")
+                #     print(f"  方向: {person.direction:.1f}°")
+                #     print(f"  状态: {person.state.name}")  # GameState 是枚举，取 name 字符串更清晰
+                #     print("-" * 40)
+
+                # 尝试使用融合坐标数据填充/修正原始摄像头数据的缺失值和误差值,尽量保证每个分摄像头的数据的完整性（减少Unknown目标）
+                tracking_results_1 = assign_unknown_ids_by_mapping(
+                    tracking_results_1, final_position, bird_view_1
+                )
+                tracking_results_2 = assign_unknown_ids_by_mapping(
+                    tracking_results_2, final_position, bird_view_2
+                )
+                tracking_results_3 = assign_unknown_ids_by_mapping(
+                    tracking_results_3, final_position, bird_view_3
+                )
+                tracking_results_4 = assign_unknown_ids_by_mapping(
+                    tracking_results_4, final_position, bird_view_4
+                )
+
                 # 绘制融合数据图像
                 mix_field = mix_bird_view.draw_final_pos_view(final_position)
-
 
                 # 将鸟瞰图放置在帧的左下角用于展示与输出
                 monitor_1 = conbine_field_and_frame(field1, frames_1[idx].copy(), tracking_results_1,bound1)
@@ -298,19 +448,43 @@ if __name__ == '__main__':
                 monitor_4 = conbine_field_and_frame(field4, frames_4[idx].copy(), tracking_results_4,bound4)
 
                 # 检测碰撞，ret为True则检测到碰撞，False则未检测到，用于关键帧提取
-                # group = [tracking_results_1,tracking_results_2,tracking_results_3,tracking_results_4]
-                # ret = check_contact(group)
+                group = [tracking_results_1,tracking_results_2,tracking_results_3,tracking_results_4]
+                ret = check_contact(group)
 
-                # if ret is True: # 接触判定代码段
-                #     print(f"Keyframe = {frame_idx} extracted")
-                #     filename = f"{output_dir}camera1/collision_frame_idx={frame_idx}.jpg"
-                #     cv2.imwrite(filename, frames_1[idx])
-                #     filename = f"{output_dir}camera2/collision_frame_idx={frame_idx}.jpg"
-                #     cv2.imwrite(filename, frames_2[idx])
-                #     filename = f"{output_dir}camera3/collision_frame_idx={frame_idx}.jpg"
-                #     cv2.imwrite(filename, frames_3[idx])
-                #     filename = f"{output_dir}camera4/collision_frame_idx={frame_idx}.jpg"
-                #     cv2.imwrite(filename, frames_4[idx])
+                if ret is True: # 接触判定代码段
+                    # 执行姿态检测
+                    # 输出的是原始检测数据，非拼接整合数据，需要自行处理
+                    pose_frame_1, pose_results_1 = frame_pose_detection(frames_1[idx].copy(), tracking_results_1,
+                                                                        pose_detector)
+                    pose_frame_2, pose_results_2 = frame_pose_detection(frames_2[idx].copy(), tracking_results_2,
+                                                                        pose_detector)
+                    pose_frame_3, pose_results_3 = frame_pose_detection(frames_3[idx].copy(), tracking_results_3,
+                                                                        pose_detector)
+                    pose_frame_4, pose_results_4 = frame_pose_detection(frames_4[idx].copy(), tracking_results_4,
+                                                                        pose_detector)
+
+                    # TODO:已知final_position的运动员位置和四个摄像头的姿态数据，依据此进行接触判定（四机位俯视+斜视）
+                    # 已有 pose_results（姿态+身份数据） ， tracking_results（目标框+身份数据），orig_img原始图像数据
+                    # 1.筛选距离相近的异队运动员（依据final_position判定）（运动员靠近是基础条件）
+                    # 1.1 对于每个摄像头进行筛选，而不是融合数据（缺失可能性大）
+                    # 1.2 筛选出可能的碰撞的运动员
+
+                    # 2.根据pose_results判定是否接触（关节点位置判定）（？视角重叠如何解决？）
+
+                    # 3.需要根据语义分割模型进行细化判定（视角重叠仍难以解决）
+
+
+                    # 保存姿态检测结果（图片）
+                    print(f"Keyframe = {frame_idx} extracted")
+                    filename = f"{output_dir}camera1/collision_frame_idx={frame_idx}.jpg"
+                    cv2.imwrite(filename, pose_frame_1)
+                    filename = f"{output_dir}camera2/collision_frame_idx={frame_idx}.jpg"
+                    cv2.imwrite(filename, pose_frame_2)
+                    filename = f"{output_dir}camera3/collision_frame_idx={frame_idx}.jpg"
+                    cv2.imwrite(filename, pose_frame_3)
+                    filename = f"{output_dir}camera4/collision_frame_idx={frame_idx}.jpg"
+                    cv2.imwrite(filename, pose_frame_4)
+
 
                 # 2 * 2 拼接
                 h1 = np.hstack((monitor_1, monitor_2))
@@ -321,6 +495,7 @@ if __name__ == '__main__':
                 scale = 0.5
                 grid_resized = cv2.resize(grid, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
+                # 显示实时运行结果
                 cv2.imshow("Monitor Grid", grid_resized)
                 cv2.imshow("mixed-camera",mix_field)
                 cv2.waitKey(1)
