@@ -1,7 +1,9 @@
 import csv
 import os
-from collections import deque
+from collections import deque,Counter
 import math
+from copy import deepcopy
+
 from src.person_state import PersonState, GameState
 
 
@@ -41,7 +43,12 @@ class StateAnalyzer:
         self.frame_interval = 15  # 取0.5秒
         # 保存3s内的运动员位置数据
         self.history_position = deque(maxlen=90)
+
+        # 运动员当前的详细信息
         self.persons_state = []
+
+        # 运动员的历史信息（保留历史数据）
+        self.history_state = deque(maxlen=90)  # 每帧一个{person_id: GameState}
 
         # 插入1-8的运动员编号
         for i in range(1, 9):
@@ -61,6 +68,8 @@ class StateAnalyzer:
 
         if len(self.history_position) >= self.frame_interval * 2 + 1:
             self.compute_motion_info()
+        # 保留历史信息
+        self.history_state.append(deepcopy(self.persons_state))
 
     def compute_motion_info(self):
         teamA = {'1','2','3','4'}
@@ -111,4 +120,34 @@ class StateAnalyzer:
 
     def get_persons_state(self):
         return self.persons_state
+
+    def get_current_attacker(self):
+        """
+        Analyze the most likely current attacker based on recent history (last 0.5s).
+        Returns attacker_id (str) or None if no attacker is clearly present.
+        """
+        if len(self.history_state) < self.frame_interval:
+            return None  # Not enough data
+
+        # 取最近 frame_interval 帧的数据
+        recent_states = list(self.history_state)[-self.frame_interval:]
+
+        # 统计每个人在这段时间内被认为是 ATTACK 的次数
+        attack_counter = Counter()
+        for frame_state in recent_states:
+            for person_state in frame_state:
+                if person_state.state == GameState.ATTACK:
+                    attack_counter[person_state.id] += 1
+
+        if not attack_counter:
+            return None  # No attacker found
+
+        # 找到出现次数最多的
+        most_common = attack_counter.most_common()
+        top_pid, top_count = most_common[0]
+
+        # 如果有并列，可以用“连续出现的帧数”或“速度”进一步判断（此处略去）
+        # 比如再检查 top_pid 是否最近连续3帧都为ATTACK
+
+        return top_pid
 

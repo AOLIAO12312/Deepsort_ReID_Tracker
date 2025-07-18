@@ -1,4 +1,6 @@
 import threading
+from collections import deque, defaultdict
+
 import numpy as np
 import torch
 from tqdm import tqdm
@@ -24,6 +26,9 @@ from src.json_writer import JsonWriter
 from src.pose_detector import PoseDetector
 
 reset_queue = queue.Queue()
+
+team_A = {"1", "2", "3", "4"}
+team_B = {"5", "6", "7", "8"}
 
 def load_config(config_path:str):
     with open(config_path, "r") as file:
@@ -117,8 +122,6 @@ def check_contact(tracking_results_group, iou_threshold=0.1, score_threshold=200
     """
     计算球员的加权接触评分，若总分超过 `score_threshold`，则判定为关键帧。
     """
-    team_A = {"1", "2", "3", "4"}
-    team_B = {"5", "6", "7", "8"}
 
     contact_score = 0  # 记录总接触评分
     for camera_idx,tracking_results in enumerate(tracking_results_group):
@@ -192,6 +195,8 @@ def frame_pose_detection(frame,tracking_results,pose_detector):
     return frame, pose_results
 
 
+
+
 import numpy as np
 
 def assign_unknown_ids_by_mapping(tracking_results, final_positions, bird_view,
@@ -249,6 +254,62 @@ def assign_unknown_ids_by_mapping(tracking_results, final_positions, bird_view,
 
     return tracking_results
 
+def convert_keypoints_to_absolute(keypoints, x1, y1):
+    """
+    将相对裁剪图中的 keypoints 坐标转换为整张图中的绝对坐标。
+
+    参数:
+        keypoints: numpy.ndarray 或 torch.Tensor，形状为 (N, 2) 或 (N, 3)，代表 N 个关键点的 (x, y) 或 (x, y, score)
+        x1, y1: 裁剪区域左上角在整图中的坐标
+
+    返回:
+        absolute_keypoints: list of (x, y)，绝对坐标形式的关键点（只保留坐标都大于 0 的）
+    """
+    if isinstance(keypoints, torch.Tensor):
+        keypoints = keypoints.detach().cpu().numpy()
+
+    absolute_keypoints = []
+
+    for kp in keypoints:
+        # 兼容 (x, y) 或 (x, y, score)
+        if len(kp) >= 2:
+            x, y = kp[:2]
+            abs_x = int(x) + x1
+            abs_y = int(y) + y1
+            if abs_x > 0 and abs_y > 0:
+                absolute_keypoints.append((abs_x, abs_y))
+
+    return absolute_keypoints
+
+
+import numpy as np
+
+import numpy as np
+
+def find_closest_keypoint_index(kpts1, kpts2):
+    """
+    查找两组关键点中距离最近的一对，并返回它们的索引和距离。
+
+    参数:
+        kpts1: list of (x, y)，第一组关键点
+        kpts2: list of (x, y)，第二组关键点
+
+    返回:
+        min_distance: float，最小距离
+        idx_pair: tuple (idx1, idx2)，分别是kpts1和kpts2中最近关键点的索引
+    """
+    min_distance = float('inf')
+    idx_pair = (-1, -1)
+
+    for i, p1 in enumerate(kpts1):
+        for j, p2 in enumerate(kpts2):
+            dist = np.linalg.norm(np.array(p1) - np.array(p2))
+            if dist < min_distance:
+                min_distance = dist
+                idx_pair = (i, j)
+
+    return min_distance, idx_pair
+
 
 
 # json_writer1 = JsonWriter("E:\\Deepsort_ReID_Tracker\\data\\output\\camera1_short.json")
@@ -260,6 +321,13 @@ if __name__ == '__main__':
     camera_name = ["camera1","camera2","camera3","camera4"]
     pose_detector = PoseDetector()
     state_analyzer = StateAnalyzer()
+
+    # 存储4个摄像头的关键帧的接触数据
+    keyframe_contact_recorder = [deque(maxlen=60), deque(maxlen=60), deque(maxlen=60), deque(maxlen=60)]
+
+    # 定义关键帧簇信息
+    start_keyframe_idx = 0  # 起始关键帧簇
+    end_keyframe_idx = 0  # 结束关键帧簇
 
     # 加载目标检测器
     detector_1 = YoloDetector(config['yolo']['model_path'], 'cuda:0')
@@ -286,13 +354,13 @@ if __name__ == '__main__':
 
     # 初始化视频输入流
     video_capture_1 = cv2.VideoCapture(
-        'E:\Deepsort_ReID_Tracker\data\input\short_version\Camera1.mp4')
+        'E:\Deepsort_ReID_Tracker\data\input\long_video\Camera1.mp4')
     video_capture_2 = cv2.VideoCapture(
-        'E:\Deepsort_ReID_Tracker\data\input\short_version\Camera2.mp4')
+        'E:\Deepsort_ReID_Tracker\data\input\long_video\Camera2.mp4')
     video_capture_3 = cv2.VideoCapture(
-        'E:\Deepsort_ReID_Tracker\data\input\short_version\Camera3.mp4')
+        'E:\Deepsort_ReID_Tracker\data\input\long_video\Camera3.mp4')
     video_capture_4 = cv2.VideoCapture(
-        'E:\Deepsort_ReID_Tracker\data\input\short_version\Camera4.mp4')
+        'E:\Deepsort_ReID_Tracker\data\input\long_video\Camera4.mp4')
 
 
     camera_fusion = CameraFusion()
@@ -451,9 +519,15 @@ if __name__ == '__main__':
                 group = [tracking_results_1,tracking_results_2,tracking_results_3,tracking_results_4]
                 ret = check_contact(group)
 
+
+
                 if ret is True: # 接触判定代码段
+                    if start_keyframe_idx == 0:
+                        start_keyframe_idx = frame_idx # 初始化起始帧
+                    end_keyframe_idx = frame_idx
+
                     # 执行姿态检测
-                    # 输出的是原始检测数据，非拼接整合数据，需要自行处理
+                    # 输出的是原始检测数据，非拼接整合数据，需自行处理
                     pose_frame_1, pose_results_1 = frame_pose_detection(frames_1[idx].copy(), tracking_results_1,
                                                                         pose_detector)
                     pose_frame_2, pose_results_2 = frame_pose_detection(frames_2[idx].copy(), tracking_results_2,
@@ -468,14 +542,80 @@ if __name__ == '__main__':
                     # 1.筛选距离相近的异队运动员（依据final_position判定）（运动员靠近是基础条件）
                     # 1.1 对于每个摄像头进行筛选，而不是融合数据（缺失可能性大）
                     # 1.2 筛选出可能的碰撞的运动员
+                    # 1.2.1 根据person_state数据找到进攻队员
+                    attacker_id = state_analyzer.get_current_attacker()
 
-                    # 2.根据pose_results判定是否接触（关节点位置判定）（？视角重叠如何解决？）
+                    # if attacker_id is None:
+                    #     print("No attacker detected, Keyframe detection failed.")
+                    #     # 直接舍弃该条数据
+                    # else:
+                    #     print(f"Current Attacker_id：{attacker_id}")
 
-                    # 3.需要根据语义分割模型进行细化判定（视角重叠仍难以解决）
+                    # 1.2.2 在每个摄像头中筛选进攻队员（没有则舍弃，有则保留）
+
+                    # 将斜视坐标转换为基准坐标（筛选距离相近的人，避免重叠视角的影响）
+                    positions = []
+                    for tracking_result in tracking_results_2:
+                        bbox = tracking_result[:4]
+                        cx = (bbox[0] + bbox[2]) / 2
+                        cy = bbox[3]
+                        positions.append([cx, cy])
+                    if len(positions) != 0:
+                        # 使用对应的转换器进行转换
+                        transformed_point = bird_view_2.bbox2coord(positions) # 实际物理距离需要除以50
+
+                    # 确定进攻者关节点的绝对位置和标准坐标位置
+                    attacker_absolute_keypoints = None
+                    for i,tracking_result_1 in enumerate(tracking_results_2):
+                        bbox = tracking_result_1[:4]
+                        x1, y1, x2, y2 = map(int, bbox)
+                        id = tracking_result_1[4]
+                        if id == attacker_id:
+                            # 1.2.3 进行关节点判定
+                            # i 即pose数据中keypoints的索引
+                            keypoints = pose_results_2[i]['keypoints']
+                            # 存放转换后的关键点坐标
+                            attacker_absolute_keypoints = convert_keypoints_to_absolute(keypoints,x1, y1)
+                            attacker_x,attacker_y = transformed_point[i][0]/50, transformed_point[i][1]/50
+                            break
+
+                    # 2.根据pose_results判定是否接触（关节点位置判定）
+                    # 通过标准坐标位置数据防止视角重叠导致的误识别
+                    if attacker_absolute_keypoints is not None:
+                        for i, tracking_result_1 in enumerate(tracking_results_2):
+                            pose_min_dist = None
+                            coord_dist = None
+                            idx1, idx2 = None, None
+                            # 判断是否是对方队伍
+                            bbox = tracking_result_1[:4]
+                            x1, y1, x2, y2 = map(int, bbox)
+                            id = tracking_result_1[4]
+                            current_absolute_keypoints = None
+                            if id != attacker_id and (attacker_id in team_A and id in team_B) or (attacker_id in team_B and id in team_A):
+                                keypoints = pose_results_2[i]['keypoints']
+                                current_absolute_keypoints = convert_keypoints_to_absolute(keypoints, x1, y1)
+                                current_x, current_y = transformed_point[i][0] / 50, transformed_point[i][1] / 50
+
+                                # 获取关节点最近距离
+                                pose_min_dist, (idx1, idx2) = find_closest_keypoint_index(attacker_absolute_keypoints, current_absolute_keypoints)
+                                # 标准坐标距离
+                                coord_dist = np.linalg.norm([current_x - attacker_x, current_y - attacker_y])
+                                # pose_min_dist为像素距离（像素）  coord_dist为物理距离（米）
+                                # print(f'attacker_id:{attacker_id},defender_id:{id} pose_min_dist:{pose_min_dist},coord_dist:{coord_dist}')
+
+                                # 写入数据，格式：frame_idx,(attacker_id,defender_id),pose_min_dist,coord_dist 作为关键帧分析数据
+                                # 循环外对该数据进行分析，一个关键帧组（连续提取的多个关键帧），找到pose_min_dist,coord_dist在阈值下且最小值的frame_idx进行输出，其他关键帧舍去，判定为接触
+                                # 会延迟输出
+                                # 测试第二个摄像头
+                                keyframe_contact_recorder[1].append((frame_idx,(attacker_id,id),pose_min_dist,coord_dist))
+
+
+
+                    # 3.需要根据语义分割模型进行细化判定（视角重叠仍难以解决）（暂时搁置）
 
 
                     # 保存姿态检测结果（图片）
-                    print(f"Keyframe = {frame_idx} extracted")
+                    # print(f"Keyframe = {frame_idx} extracted")
                     filename = f"{output_dir}camera1/collision_frame_idx={frame_idx}.jpg"
                     cv2.imwrite(filename, pose_frame_1)
                     filename = f"{output_dir}camera2/collision_frame_idx={frame_idx}.jpg"
@@ -485,6 +625,42 @@ if __name__ == '__main__':
                     filename = f"{output_dir}camera4/collision_frame_idx={frame_idx}.jpg"
                     cv2.imwrite(filename, pose_frame_4)
 
+                # 后处理关键帧数据
+                # if end_keyframe_idx != 0 and start_keyframe_idx != 0 and end_keyframe_idx - start_keyframe_idx < 8:
+                #     # 两者间隔不超过8直接舍弃 （关键帧簇不可太短）
+                #     start_keyframe_idx = 0
+                #     end_keyframe_idx = 0
+
+                if end_keyframe_idx - start_keyframe_idx >= 8 and frame_idx - end_keyframe_idx > 10:
+                    # 2.当前的frame_idx-end_keyframe_idx > 15（即当前簇已记录完） 时提醒进行数据处理
+                    cluster =  list(keyframe_contact_recorder[1])
+                    result = []
+                    valid_contacts = []
+                    pair_to_contacts = defaultdict(list)
+                    # 1. 收集符合阈值的接触
+                    for frame_idx, (attacker_id, defender_id), pose_dist, coord_dist in cluster:
+                        if pose_dist < 50 and coord_dist < 2.5:  # 阈值可以调整
+                            pair_to_contacts[(attacker_id, defender_id)].append(
+                                (frame_idx, (attacker_id, defender_id), pose_dist, coord_dist)
+                            )
+
+                    # 2. 对每个对手组合选出最小的接触（pose优先，其次coord）
+                    for pair, contacts in pair_to_contacts.items():
+                        min_contact = min(contacts, key=lambda x: (x[2], x[3]))  # x[2] 是 pose_dist, x[3] 是 coord_dist
+                        result.append({
+                            'cluster_range': (cluster[0][0], cluster[-1][0]),
+                            'best_frame': min_contact[0],
+                            'pair': min_contact[1],
+                            'pose_dist': min_contact[2],
+                            'coord_dist': min_contact[3],
+                            # 'all_contacts': contacts  # 如有需要可保留所有contact
+                        })
+                    print(result)
+                    # 处理结束，清理关键帧数据
+                    keyframe_contact_recorder[1].clear()
+                    # 重置关键帧簇
+                    start_keyframe_idx = 0
+                    end_keyframe_idx = 0
 
                 # 2 * 2 拼接
                 h1 = np.hstack((monitor_1, monitor_2))
@@ -496,9 +672,9 @@ if __name__ == '__main__':
                 grid_resized = cv2.resize(grid, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
                 # 显示实时运行结果
-                cv2.imshow("Monitor Grid", grid_resized)
-                cv2.imshow("mixed-camera",mix_field)
-                cv2.waitKey(1)
+                # cv2.imshow("Monitor Grid", grid_resized)
+                # cv2.imshow("mixed-camera",mix_field)
+                # cv2.waitKey(1)
 
 
                 # 写入视频数据
