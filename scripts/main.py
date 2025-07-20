@@ -14,6 +14,7 @@ from models.yolo.yolo_detector import YoloDetector
 import cv2
 import queue
 
+from src.pose_judge import PoseJudge
 from src.state_analyzer import save_person_state_to_csv
 
 from src.camera_fusion import CameraFusion
@@ -118,7 +119,7 @@ def compute_iou(box1, box2):
     return inter_area / union_area if union_area > 0 else 0, area1, area2  # 额外返回框面积
 
 
-def check_contact(tracking_results_group, iou_threshold=0.1, score_threshold=2000):
+def check_contact(tracking_results_group, iou_threshold=0.1, score_threshold=3500):
     """
     计算球员的加权接触评分，若总分超过 `score_threshold`，则判定为关键帧。
     """
@@ -322,18 +323,16 @@ if __name__ == '__main__':
     pose_detector = PoseDetector()
     state_analyzer = StateAnalyzer()
 
-    # 存储4个摄像头的关键帧的接触数据
-    keyframe_contact_recorder = [deque(maxlen=60), deque(maxlen=60), deque(maxlen=60), deque(maxlen=60)]
-
-    # 定义关键帧簇信息
-    start_keyframe_idx = 0  # 起始关键帧簇
-    end_keyframe_idx = 0  # 结束关键帧簇
-
     # 加载目标检测器
     detector_1 = YoloDetector(config['yolo']['model_path'], 'cuda:0')
     detector_2 = YoloDetector(config['yolo']['model_path'], 'cuda:0')
     detector_3 = YoloDetector(config['yolo']['model_path'], 'cuda:0')
     detector_4 = YoloDetector(config['yolo']['model_path'], 'cuda:0')
+
+    pose_judge_1 = PoseJudge(camera_name[0])
+    pose_judge_2 = PoseJudge(camera_name[1])
+    pose_judge_3 = PoseJudge(camera_name[2])
+    pose_judge_4 = PoseJudge(camera_name[3])
 
     # 加载鸟瞰图生成器
     bird_view_1 = BirdEyeView()
@@ -519,13 +518,7 @@ if __name__ == '__main__':
                 group = [tracking_results_1,tracking_results_2,tracking_results_3,tracking_results_4]
                 ret = check_contact(group)
 
-
-
                 if ret is True: # 接触判定代码段
-                    if start_keyframe_idx == 0:
-                        start_keyframe_idx = frame_idx # 初始化起始帧
-                    end_keyframe_idx = frame_idx
-
                     # 执行姿态检测
                     # 输出的是原始检测数据，非拼接整合数据，需自行处理
                     pose_frame_1, pose_results_1 = frame_pose_detection(frames_1[idx].copy(), tracking_results_1,
@@ -545,72 +538,20 @@ if __name__ == '__main__':
                     # 1.2.1 根据person_state数据找到进攻队员
                     attacker_id = state_analyzer.get_current_attacker()
 
-                    # if attacker_id is None:
-                    #     print("No attacker detected, Keyframe detection failed.")
-                    #     # 直接舍弃该条数据
-                    # else:
-                    #     print(f"Current Attacker_id：{attacker_id}")
+
+                    # 集成，进行姿态判定
+                    pose_judge_1.update_keyframe(frame_idx, attacker_id, tracking_results_1, pose_results_1,
+                                                 bird_view_1)
+                    pose_judge_2.update_keyframe(frame_idx, attacker_id, tracking_results_2, pose_results_2,
+                                                 bird_view_2)
+                    pose_judge_3.update_keyframe(frame_idx, attacker_id, tracking_results_3, pose_results_3,
+                                                 bird_view_3)
+                    pose_judge_4.update_keyframe(frame_idx, attacker_id, tracking_results_4, pose_results_4,
+                                                 bird_view_4)
 
                     # 1.2.2 在每个摄像头中筛选进攻队员（没有则舍弃，有则保留）
 
                     # 将斜视坐标转换为基准坐标（筛选距离相近的人，避免重叠视角的影响）
-                    positions = []
-                    for tracking_result in tracking_results_2:
-                        bbox = tracking_result[:4]
-                        cx = (bbox[0] + bbox[2]) / 2
-                        cy = bbox[3]
-                        positions.append([cx, cy])
-                    if len(positions) != 0:
-                        # 使用对应的转换器进行转换
-                        transformed_point = bird_view_2.bbox2coord(positions) # 实际物理距离需要除以50
-
-                    # 确定进攻者关节点的绝对位置和标准坐标位置
-                    attacker_absolute_keypoints = None
-                    for i,tracking_result_1 in enumerate(tracking_results_2):
-                        bbox = tracking_result_1[:4]
-                        x1, y1, x2, y2 = map(int, bbox)
-                        id = tracking_result_1[4]
-                        if id == attacker_id:
-                            # 1.2.3 进行关节点判定
-                            # i 即pose数据中keypoints的索引
-                            keypoints = pose_results_2[i]['keypoints']
-                            # 存放转换后的关键点坐标
-                            attacker_absolute_keypoints = convert_keypoints_to_absolute(keypoints,x1, y1)
-                            attacker_x,attacker_y = transformed_point[i][0]/50, transformed_point[i][1]/50
-                            break
-
-                    # 2.根据pose_results判定是否接触（关节点位置判定）
-                    # 通过标准坐标位置数据防止视角重叠导致的误识别
-                    if attacker_absolute_keypoints is not None:
-                        for i, tracking_result_1 in enumerate(tracking_results_2):
-                            pose_min_dist = None
-                            coord_dist = None
-                            idx1, idx2 = None, None
-                            # 判断是否是对方队伍
-                            bbox = tracking_result_1[:4]
-                            x1, y1, x2, y2 = map(int, bbox)
-                            id = tracking_result_1[4]
-                            current_absolute_keypoints = None
-                            if id != attacker_id and (attacker_id in team_A and id in team_B) or (attacker_id in team_B and id in team_A):
-                                keypoints = pose_results_2[i]['keypoints']
-                                current_absolute_keypoints = convert_keypoints_to_absolute(keypoints, x1, y1)
-                                current_x, current_y = transformed_point[i][0] / 50, transformed_point[i][1] / 50
-
-                                # 获取关节点最近距离
-                                pose_min_dist, (idx1, idx2) = find_closest_keypoint_index(attacker_absolute_keypoints, current_absolute_keypoints)
-                                # 标准坐标距离
-                                coord_dist = np.linalg.norm([current_x - attacker_x, current_y - attacker_y])
-                                # pose_min_dist为像素距离（像素）  coord_dist为物理距离（米）
-                                # print(f'attacker_id:{attacker_id},defender_id:{id} pose_min_dist:{pose_min_dist},coord_dist:{coord_dist}')
-
-                                # 写入数据，格式：frame_idx,(attacker_id,defender_id),pose_min_dist,coord_dist 作为关键帧分析数据
-                                # 循环外对该数据进行分析，一个关键帧组（连续提取的多个关键帧），找到pose_min_dist,coord_dist在阈值下且最小值的frame_idx进行输出，其他关键帧舍去，判定为接触
-                                # 会延迟输出
-                                # 测试第二个摄像头
-                                keyframe_contact_recorder[1].append((frame_idx,(attacker_id,id),pose_min_dist,coord_dist))
-
-
-
                     # 3.需要根据语义分割模型进行细化判定（视角重叠仍难以解决）（暂时搁置）
 
 
@@ -631,36 +572,10 @@ if __name__ == '__main__':
                 #     start_keyframe_idx = 0
                 #     end_keyframe_idx = 0
 
-                if end_keyframe_idx - start_keyframe_idx >= 8 and frame_idx - end_keyframe_idx > 10:
-                    # 2.当前的frame_idx-end_keyframe_idx > 15（即当前簇已记录完） 时提醒进行数据处理
-                    cluster =  list(keyframe_contact_recorder[1])
-                    result = []
-                    valid_contacts = []
-                    pair_to_contacts = defaultdict(list)
-                    # 1. 收集符合阈值的接触
-                    for frame_idx, (attacker_id, defender_id), pose_dist, coord_dist in cluster:
-                        if pose_dist < 50 and coord_dist < 2.5:  # 阈值可以调整
-                            pair_to_contacts[(attacker_id, defender_id)].append(
-                                (frame_idx, (attacker_id, defender_id), pose_dist, coord_dist)
-                            )
-
-                    # 2. 对每个对手组合选出最小的接触（pose优先，其次coord）
-                    for pair, contacts in pair_to_contacts.items():
-                        min_contact = min(contacts, key=lambda x: (x[2], x[3]))  # x[2] 是 pose_dist, x[3] 是 coord_dist
-                        result.append({
-                            'cluster_range': (cluster[0][0], cluster[-1][0]),
-                            'best_frame': min_contact[0],
-                            'pair': min_contact[1],
-                            'pose_dist': min_contact[2],
-                            'coord_dist': min_contact[3],
-                            # 'all_contacts': contacts  # 如有需要可保留所有contact
-                        })
-                    print(result)
-                    # 处理结束，清理关键帧数据
-                    keyframe_contact_recorder[1].clear()
-                    # 重置关键帧簇
-                    start_keyframe_idx = 0
-                    end_keyframe_idx = 0
+                pose_judge_1.check_keyframe_cluster(frame_idx)
+                pose_judge_2.check_keyframe_cluster(frame_idx)
+                pose_judge_3.check_keyframe_cluster(frame_idx)
+                pose_judge_4.check_keyframe_cluster(frame_idx)
 
                 # 2 * 2 拼接
                 h1 = np.hstack((monitor_1, monitor_2))
